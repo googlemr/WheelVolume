@@ -1,13 +1,30 @@
 # WheelVolume 开源交付清单
 
-## ✅ 已发布（2026-11-20）
+## ✅ 已发布（2026-11-20，最新 v1.0.1）
 
-- 仓库：https://github.com/googlemr/WheelVolume （main + tag v1.0.0 均已推送）
-- Release：https://github.com/googlemr/WheelVolume/releases/tag/v1.0.0
-  - `WheelVolume-v1.0.0-arm64.dmg`（47 KB）
-  - `WheelVolume-v1.0.0-arm64.zip`（27 KB）
+- 仓库：https://github.com/googlemr/WheelVolume （main + tag v1.0.1 均已推送）
+- **当前推荐版本**：https://github.com/googlemr/WheelVolume/releases/tag/v1.0.1
+  - `WheelVolume-v1.0.1-arm64.dmg`（50 KB，含一键安装脚本）
+  - `WheelVolume-v1.0.1-arm64.zip`（28 KB）
   - `SHA256SUMS.txt`
-- 下方"推送故障排查与修复记录"作为过程留档；所有步骤均已执行完毕，无需再手动操作。
+- v1.0.0 的安装包因签名缺陷会被 macOS 判为"已损坏"，其二进制资产**已从下载区移除**，
+  Release 说明已加警告并指向 v1.0.1。
+
+### v1.0.1 修的是什么
+
+v1.0.0 只对可执行文件做了 linker 级 ad-hoc 签名，`.app` 包内 `Info.plist` 未绑定，
+`codesign` 校验报：
+
+```
+code has no resources but signature indicates they must be present
+```
+
+Gatekeeper 因此判定包被篡改，弹出"已损坏，无法打开，你应该将它移到废纸篓"。
+v1.0.1 在构建时对整个 bundle 执行 `codesign --force --deep --sign -`，并让 DMG
+内置「安装.command」，自动完成复制、清除隔离标记、重新签名与启动。
+
+验证结果：从 GitHub 真实下载 DMG → 复制 app → 打 `com.apple.quarantine` →
+`codesign --verify` 返回 `valid on disk` / `satisfies its Designated Requirement`。
 
 本地仓库根目录：`/Users/d/WorkBuddy/2026-11-19-17-14-07/WheelVolume`
 
@@ -18,9 +35,11 @@
 | 文件 | 说明 |
 | --- | --- |
 | `src/WheelVolume.swift` | 全部源码，单文件、无第三方依赖，已编译验证 |
-| `Resources/Info.plist` | App 元数据（版本 1.0.0、LSUIElement、arm64） |
+| `Resources/Info.plist` | App 元数据（版本 1.0.1、LSUIElement、arm64） |
+| `Resources/安装.command` | DMG 内一键安装脚本（复制、清隔离、签名、启动） |
+| `Resources/安装说明.txt` | DMG 内安装/授权/卸载/已损坏排查说明 |
 | `Resources/config.json` | 默认配置模板 |
-| `Scripts/build.sh` | 一键构建（校验 arm64 → 编译 → app → DMG/ZIP → 校验值） |
+| `Scripts/build.sh` | 一键构建（校验 arm64 → 编译 → **bundle 签名** → DMG/ZIP → 校验值） |
 | `Scripts/install.sh` | 安装到「应用程序」+ 配置 LaunchAgent 自启 |
 
 ### 文档（中文）
