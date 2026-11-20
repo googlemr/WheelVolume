@@ -1,7 +1,15 @@
 # WheelVolume 开源交付清单
 
-本项目已按可直接开源发布的标准准备完毕。仓库根目录：
-`/Users/d/WorkBuddy/2026-11-19-17-14-07/WheelVolume`
+## ✅ 已发布（2026-11-20）
+
+- 仓库：https://github.com/googlemr/WheelVolume （main + tag v1.0.0 均已推送）
+- Release：https://github.com/googlemr/WheelVolume/releases/tag/v1.0.0
+  - `WheelVolume-v1.0.0-arm64.dmg`（47 KB）
+  - `WheelVolume-v1.0.0-arm64.zip`（27 KB）
+  - `SHA256SUMS.txt`
+- 下方"推送故障排查与修复记录"作为过程留档；所有步骤均已执行完毕，无需再手动操作。
+
+本地仓库根目录：`/Users/d/WorkBuddy/2026-11-19-17-14-07/WheelVolume`
 
 ## 交付内容
 

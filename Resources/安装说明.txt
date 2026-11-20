@@ -1,0 +1,66 @@
+WheelVolume — 安装说明
+================================================
+
+【最简单的方式】
+
+  双击打开「安装.command」，按提示操作即可。
+  它会自动完成：复制到"应用程序"、清除隔离标记、本地签名、启动程序。
+
+  如果双击「安装.command」提示"无法打开，因为无法验证开发者"：
+  右键点击它 → 选择"打开" → 在弹窗里再点"打开"。
+
+  如果右键也打不开，请在"终端"里执行（把文件拖进终端可自动补全路径）：
+
+      bash "/Volumes/WheelVolume/安装.command"
+
+
+【为什么会提示"已损坏"】
+
+  本工具没有 Apple 付费开发者证书（每年 99 美元），无法做公证。
+  macOS 会给从网络下载的文件打上隔离标记，Gatekeeper 遇到未公证的
+  应用就报"已损坏，应移到废纸篓"——这并不意味着文件真的损坏。
+
+  解决办法就是清除隔离标记，安装脚本已自动处理。
+
+
+【手动安装（不喜欢用脚本时）】
+
+  1. 把 WheelVolume.app 拖到"应用程序"文件夹
+  2. 打开"终端"，执行：
+
+      xattr -dr com.apple.quarantine /Applications/WheelVolume.app
+      codesign --force --deep --sign - /Applications/WheelVolume.app
+      open /Applications/WheelVolume.app
+
+  3. 到 系统设置 > 隐私与安全性 > 辅助功能，勾选 WheelVolume
+
+
+【必做的授权】
+
+  WheelVolume 需要"辅助功能"权限才能接收滚轮事件。
+  路径：系统设置 > 隐私与安全性 > 辅助功能 → 勾选 WheelVolume
+
+  不授权的话程序在运行，但滚动滚轮不会有任何反应。
+
+
+【使用方法】
+
+  按住 Option（或 Fn）键，同时滚动鼠标滚轮：
+    上滑 → 减小音量
+    下滑 → 增加音量
+
+  每次滚动 2%，可无级细调。屏幕会出现音量浮层。
+
+
+【卸载】
+
+  在"终端"执行：
+
+      launchctl unload ~/Library/LaunchAgents/com.shanlin.WheelVolume.plist 2>/dev/null
+      rm -f ~/Library/LaunchAgents/com.shanlin.WheelVolume.plist
+      rm -rf /Applications/WheelVolume.app
+      rm -rf "$HOME/Library/Application Support/WheelVolume"
+
+
+项目主页：https://github.com/googlemr/WheelVolume
+问题反馈：https://github.com/googlemr/WheelVolume/issues

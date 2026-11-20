@@ -29,6 +29,16 @@ echo "==> 安装到 $DEST_APP"
 rm -rf "$DEST_APP"
 cp -R "$SRC_APP" "$DEST_APP"
 
+# 2.1) 清除隔离标记并本地重新签名
+# 从网络下载的包会带 com.apple.quarantine，Gatekeeper 会拦截未公证应用，
+# 表现为"已损坏，应移到废纸篓"。这里清除标记并对 bundle 重新 ad-hoc 签名。
+echo "==> 清除隔离标记并签名"
+xattr -dr com.apple.quarantine "$DEST_APP" 2>/dev/null || true
+codesign --force --deep --sign - "$DEST_APP" >/dev/null 2>&1 || true
+codesign --verify "$DEST_APP" >/dev/null 2>&1 \
+    && echo "    签名校验通过" \
+    || echo "    警告：签名校验失败，请检查 App 包完整性"
+
 # 3) 写入 LaunchAgent
 mkdir -p "$(dirname "$AGENT")"
 cat > "$AGENT" <<EOF

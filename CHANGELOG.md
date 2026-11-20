@@ -8,6 +8,27 @@
 
 （暂无）
 
+## [1.0.1] - 2026-11-20
+
+修复安装包被 macOS 判定为"已损坏，无法打开"的问题。
+
+### 修复
+
+- **打包签名缺陷（核心）**：v1.0.0 只对可执行文件做了 linker 级 ad-hoc 签名，
+  `.app` 包内 `Info.plist` 未绑定，`codesign --verify` 报
+  `code has no resources but signature indicates they must be present`，
+  Gatekeeper 因此判定应用已损坏。现在构建脚本对整个 bundle 执行
+  `codesign --force --deep --sign -`，签名覆盖 `Info.plist` 与资源清单。
+- DMG 内新增「安装.command」一键安装脚本：自动复制到「应用程序」、清除
+  `com.apple.quarantine` 隔离标记、本地重新签名并启动，普通用户无需打开终端。
+- DMG 内新增「安装说明.txt」，包含安装、授权、卸载与"已损坏"排查说明。
+
+### 文档
+
+- `docs/INSTALL.md` 重写安装流程，新增"为什么会出现已损坏"专门章节。
+- `docs/FAQ.md` 新增"已损坏，无法打开"条目，区分"已损坏"与"无法验证开发者"
+  两种不同拦截。
+
 ## [1.0.0] - 2026-11-19
 
 首个公开版本。

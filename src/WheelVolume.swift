@@ -10,7 +10,7 @@ import AppKit
 
 // MARK: - 元信息
 
-let APP_VERSION = "1.0.0"
+let APP_VERSION = "1.0.1"
 let APP_NAME = "WheelVolume"
 
 // MARK: - 配置

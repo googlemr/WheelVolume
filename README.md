@@ -24,11 +24,25 @@ macOS 系统音量只有 16 格，按音量键一跳就是 6%+，想精细调一
 
 ### 下载安装（普通用户）
 
-1. 到 [Releases](https://github.com/googlemr/WheelVolume/releases) 下载 `WheelVolume-v<版本>-arm64.dmg`（或 `.zip`）。
-2. 打开 DMG，把 `WheelVolume.app` 拖进「应用程序」。
+1. 到 [Releases](https://github.com/googlemr/WheelVolume/releases) 下载最新版
+   `WheelVolume-v<版本>-arm64.dmg`（或 `.zip`）。
+2. 双击 DMG 挂载，**双击里面的「安装.command」**，按提示走完即可。
+
+   脚本会自动复制到「应用程序」、清除 macOS 隔离标记、本地重新签名并启动，
+   不需要打开终端。
+
 3. 首次运行会请求**辅助功能**权限，请在弹窗中允许，或前往
    **系统设置 → 隐私与安全性 → 辅助功能** 勾选 WheelVolume。
 4. 按住 `Option` + 滚轮即可调节。
+
+> **提示"已损坏，无法打开"？** 这是未公证应用的 Gatekeeper 拦截，文件没坏。
+> v1.0.1 已修复打包签名缺陷；若仍遇到，点开 [安装说明](docs/INSTALL.md)。
+> 紧急处理：
+> ```bash
+> xattr -dr com.apple.quarantine /Applications/WheelVolume.app
+> codesign --force --deep --sign - /Applications/WheelVolume.app
+> open /Applications/WheelVolume.app
+> ```
 
 完整步骤见 [安装说明](docs/INSTALL.md)。
 

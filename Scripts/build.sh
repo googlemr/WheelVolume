@@ -53,13 +53,30 @@ chmod +x "$MACOS/WheelVolume"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_VERSION" "$CONTENTS/Info.plist" 2>/dev/null || true
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$CONTENTS/Info.plist" 2>/dev/null || true
 
+# 5.1) 关键步骤：对整个 app bundle 做 ad-hoc 签名
+# swiftc 产出的二进制只有 linker 级签名（Info.plist 未绑定），放进 .app 后
+# 签名与包内容不匹配，下载后 Gatekeeper 会判定为"已损坏，应移到废纸篓"。
+# 必须对整个 bundle 重新签名，让签名覆盖 Info.plist 与资源。
+echo "==> 对 app bundle 做 ad-hoc 签名 ..."
+codesign --force --deep --sign - --timestamp=none "$APP"
+codesign --verify --deep --strict --verbose=1 "$APP"
+echo "    签名信息："
+codesign -dv --verbose=2 "$APP" 2>&1 | grep -E "Identifier=|Format=|Signature=|Info.plist entries=|Sealed Resources" | sed 's/^/      /'
+
 # 6) 生成 ZIP（不含 __MACOSX 资源分叉，保持包干净）
 echo "==> 生成 ZIP ..."
 (cd "$DIST" && /usr/bin/zip -q -r -y "$ZIP" WheelVolume.app)
 
-# 7) 生成 DMG
+# 7) 生成 DMG：内置 app、一键安装脚本与说明
 echo "==> 生成 DMG ..."
-hdiutil create -volname "WheelVolume" -srcfolder "$APP" -ov -format UDZO "$DMG" >/dev/null
+STAGE="$DIST/.stage"
+mkdir -p "$STAGE"
+cp -R "$APP" "$STAGE/WheelVolume.app"
+cp Resources/安装.command "$STAGE/安装.command"
+chmod +x "$STAGE/安装.command"
+cp Resources/安装说明.txt "$STAGE/安装说明.txt"
+hdiutil create -volname "WheelVolume" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+rm -rf "$STAGE"
 
 # 8) 校验与输出
 echo "==> 完成。产物："

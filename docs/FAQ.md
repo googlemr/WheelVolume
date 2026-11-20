@@ -28,6 +28,28 @@ nano ~/Library/Application\ Support/WheelVolume/config.json
 
 触控板或高速滚轮会产生大量连续事件。把 `minInterval` 从 `0.025` 调大到 `0.05` 秒，降低响应密度。
 
+## 提示"已损坏，无法打开，你应该将它移到废纸篓"
+
+这是最常见的问题。**文件本身没有损坏**，原因是 macOS 的 Gatekeeper 拦截了未公证的应用。
+
+v1.0.0 的发布包有一个打包缺陷：只对可执行文件做了 linker 级签名，`.app` 包内
+`Info.plist` 未绑定（`codesign` 报 `code has no resources but signature indicates they
+must be present`），系统因此判定包结构被篡改，报出"已损坏"。**v1.0.1 已修复**——
+现在对整个 `.app` 包做了 ad-hoc 签名，包内容和签名一致。
+
+如果你下的是旧版本，或修复后仍被拦截，执行：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/WheelVolume.app
+codesign --force --deep --sign - /Applications/WheelVolume.app
+open /Applications/WheelVolume.app
+```
+
+或者直接下 v1.0.1 的 DMG，双击里面的「安装.command」，它会自动完成上述三步。
+
+如果双击 App 只提示"无法验证开发者"（不是"已损坏"），说明签名是好的，属于正常的
+未公证拦截：右键 App →「打开」→「打开」，或去 系统设置 → 隐私与安全性 →「仍要打开」。
+
 ## 提示“无法打开，因为来自身份不明的开发者”
 
 项目未做 Apple 开发者签名/公证（见下方说明）。处理方式：
@@ -38,6 +60,9 @@ nano ~/Library/Application\ Support/WheelVolume/config.json
 ## 为什么没有签名/公证？
 
 Apple Developer Program 年费 99 美元且需实名主体。本项目作为开源工具默认以未签名形式分发，避免绑定特定开发者账号。签名与公证的构建路径已在 [发布流程](RELEASE.md) 中标注，持有开发者证书的维护者可启用。
+
+> 注：发布包已使用 ad-hoc 签名（`codesign --sign -`）保证包完整性，这与 Apple
+> 开发者证书签名不同，无法通过 Gatekeeper 的公证检查，但能正常运行。
 
 ## Intel Mac 能用吗
 
