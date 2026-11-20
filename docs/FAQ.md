@@ -1,89 +1,74 @@
-# 常见问题（FAQ）
+# 常见问题
 
-## 滚轮调节完全没反应
+## 装了但滚轮没反应
 
-按顺序排查：
+1. 打开设置窗口，看第一栏是不是"缺少「辅助功能」权限"；
+2. 若是，点 **去授权**，在 系统设置 → 隐私与安全性 → 辅助功能 中勾选 WheelVolume；
+3. 授权后 1 秒内程序会自动开始监听，不需要重启。
 
-1. **是否授予辅助功能权限**：系统设置 → 隐私与安全性 → 辅助功能 → WheelVolume 已勾选。
-2. **程序是否在运行**：`pgrep -fl WheelVolume` 应有输出。
-3. **是否按住修饰键**：必须按住 `Option` 或 `Fn` 再滚动。
-4. **日志报错**：`cat /tmp/wheelvolume/err.log`，常见为“无法创建事件监听（缺少辅助功能权限）”。
-5. **改过权限后没重启**：取消勾选再重新勾选，并重启程序。
+如果列表里已有 WheelVolume 且是勾选状态但依然无效（常见于从 1.x 升级），
+请取消勾选再重新勾选一次。
 
-## 方向反了（上滑反而增大音量）
+## 打开时提示"应用程序没有响应"
 
-在配置里把 `invert` 改为 `true`，重启程序：
+这是 **1.0.x 的已知缺陷**，2.0.0 已修复。
 
-```bash
-# 编辑配置
-nano ~/Library/Application\ Support/WheelVolume/config.json
-# 把 "invert": false 改成 true，保存后重启 launchctl 服务
-```
+原因：1.x 只是在 `.app` 里放了一个命令行程序，用 `CFRunLoopRun()` 挂起进程，
+从未初始化 `NSApplication`，LaunchServices 等不到"应用已就绪"的回执，于是判定为
+无响应。2.0.0 改成了标准 AppKit 应用（`NSApplication` + `AppDelegate`），
+启动到 check-in 约 0.5 秒。
 
-## 想调得更细 / 更粗
-
-改 `step`：`0.01` = 1%/格（更细），`0.05` = 5%/格更粗。默认 `0.02`。
-
-## 惯性滚动一下音量跳太多
-
-触控板或高速滚轮会产生大量连续事件。把 `minInterval` 从 `0.025` 调大到 `0.05` 秒，降低响应密度。
-
-## 提示"已损坏，无法打开，你应该将它移到废纸篓"
-
-这是最常见的问题。**文件本身没有损坏**，原因是 macOS 的 Gatekeeper 拦截了未公证的应用。
-
-v1.0.0 的发布包有一个打包缺陷：只对可执行文件做了 linker 级签名，`.app` 包内
-`Info.plist` 未绑定（`codesign` 报 `code has no resources but signature indicates they
-must be present`），系统因此判定包结构被篡改，报出"已损坏"。**v1.0.1 已修复**——
-现在对整个 `.app` 包做了 ad-hoc 签名，包内容和签名一致。
-
-如果你下的是旧版本，或修复后仍被拦截，执行：
+遇到这个提示说明装的是旧版，请卸载后安装 2.0.0：
 
 ```bash
-xattr -dr com.apple.quarantine /Applications/WheelVolume.app
-codesign --force --deep --sign - /Applications/WheelVolume.app
-open /Applications/WheelVolume.app
+pkill -x WheelVolume
+rm -f ~/Library/LaunchAgents/com.dushanlin.WheelVolume.plist
+rm -rf /Applications/WheelVolume.app "$HOME/Applications/WheelVolume.app"
 ```
 
-或者直接下 v1.0.1 的 DMG，双击里面的「安装.command」，它会自动完成上述三步。
+## 提示"已损坏，应移到废纸篓"
 
-如果双击 App 只提示"无法验证开发者"（不是"已损坏"），说明签名是好的，属于正常的
-未公证拦截：右键 App →「打开」→「打开」，或去 系统设置 → 隐私与安全性 →「仍要打开」。
+1.0.0 的发布包只对可执行文件做了 linker 级签名，包里的 `Info.plist` 与资源没有
+被签名覆盖，Gatekeeper 校验失败就会报"已损坏"。1.0.1 起改为整包 ad-hoc 签名，
+2.0.0 同样。若仍遇到，说明下载的是旧包或包在传输中损坏：
 
-## 提示“无法打开，因为来自身份不明的开发者”
+```bash
+codesign --verify --deep --strict --verbose=2 /Applications/WheelVolume.app
+shasum -a 256 ~/Downloads/WheelVolume-v2.0.0-arm64.dmg   # 与 Release 页的 SHA256SUMS.txt 比对
+```
 
-项目未做 Apple 开发者签名/公证（见下方说明）。处理方式：
+签名无效就重新下载；有效则双击 DMG 里的 `安装.command`。
 
-- 右键 `WheelVolume.app` →「打开」→ 弹窗中再点「打开」；或
-- 系统设置 → 隐私与安全性 → 找到 WheelVolume 的拦截提示 →「仍要打开」。
+## 提示"Apple 无法验证" / "无法打开，因为无法验证开发者"
 
-## 为什么没有签名/公证？
+未公证应用的正常提示，不是损坏。去 **系统设置 → 隐私与安全性**，
+在页面下方点 **仍要打开**。
 
-Apple Developer Program 年费 99 美元且需实名主体。本项目作为开源工具默认以未签名形式分发，避免绑定特定开发者账号。签名与公证的构建路径已在 [发布流程](RELEASE.md) 中标注，持有开发者证书的维护者可启用。
+## 方向反了
 
-> 注：发布包已使用 ad-hoc 签名（`codesign --sign -`）保证包完整性，这与 Apple
-> 开发者证书签名不同，无法通过 Gatekeeper 的公证检查，但能正常运行。
+设置 → 勾选 **反转方向（下滑减小、上滑增大）**。
 
-## Intel Mac 能用吗
+## 调一次跳太多 / 太迟钝
 
-不能。项目仅支持 Apple Silicon（arm64）。官方渠道未提供 x86_64 版本，也不建议用 Rosetta 运行（启动时会检测并提示）。
+调 **调节精细度**：想更细腻就调小（0.5%–1%），想更灵敏就调大（5%）。
+如果感觉"滚一下跳好几档"，把 **调节间隔** 调大一些。
 
-## 调节时页面也在滚动
+## 音量调了但系统音量条没变
 
-正常不会——被修饰键触发的滚轮事件会被吞掉。若你使用的是某些特殊驱动（如 Logitech Options、BetterTouchTool）自定义了滚轮映射，可能导致事件绕过本机监听；尝试关闭这些工具的滚轮重映射。
+外接显示器、部分 USB 声卡没有"主音量"通道。程序会自动回退到声道级音量控制；
+如果设备完全不支持音量调节（例如某些 HDMI 输出），滚轮不会有反应，此时请用
+显示器自带的音量控制。
 
-## 静音状态下调节会怎样
+## 会读取我的键盘输入吗
 
-向上滚动（减小）保持静音；向下滚动（增大）会自动解除静音并开始增大音量。
+不会。程序只订阅 `scrollWheel` 类型的滚轮事件，且必须按住 Option/Fn 才处理；
+不监听键盘、不记录内容、不联网、不写日志文件。
 
-## 多个输出设备时作用于哪个
+## 开机自启在哪里关
 
-始终作用于当前系统默认输出设备。切换设备后下一次调节自动生效，无需重启。
+菜单栏图标 → 取消勾选 **登录时自动启动**，或在设置窗口里关闭该开关。
+对应文件：`~/Library/LaunchAgents/com.shanlin.WheelVolume.plist`。
 
-## 如何彻底卸载
+## 怎么彻底卸载
 
-见 [安装说明 - 卸载](INSTALL.md#卸载)。
-
-## 没有我想要的答案
-
-到 [Issues](https://github.com/googlemr/WheelVolume/issues) 提问，或在 [Discussions](https://github.com/googlemr/WheelVolume/discussions) 发起讨论。提交前请先搜索是否已有相同问题。
+见 [安装说明](INSTALL.md#卸载)。

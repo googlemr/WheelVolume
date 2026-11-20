@@ -27,11 +27,13 @@ jobs:
 
       - name: 编译验证
         run: |
-          swiftc -O -target arm64-apple-macos11.0 \
+          swiftc -O -swift-version 5 -target arm64-apple-macos13.0 \
             -o /tmp/WheelVolume src/WheelVolume.swift
           lipo -archs /tmp/WheelVolume
           /tmp/WheelVolume --version
           /tmp/WheelVolume --help
+          /tmp/WheelVolume --render-settings /tmp/settings-preview.png
+          test -s /tmp/settings-preview.png
 
       - name: 构建发布物
         run: ./Scripts/build.sh
@@ -39,6 +41,8 @@ jobs:
       - name: 校验发布物
         run: |
           test -f dist/WheelVolume.app/Contents/MacOS/WheelVolume
+          test -f dist/WheelVolume.app/Contents/Resources/AppIcon.icns
+          codesign --verify --deep --strict dist/WheelVolume.app
           ./dist/WheelVolume.app/Contents/MacOS/WheelVolume --version
           (cd dist && shasum -a 256 -c SHA256SUMS.txt)
 

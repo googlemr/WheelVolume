@@ -29,3 +29,7 @@ xcuserdata/
 
 # 用户配置（不应入库）
 config.local.json
+
+# 图标生成中间物
+Resources/AppIcon.iconset/
+Resources/AppIcon-1024.png

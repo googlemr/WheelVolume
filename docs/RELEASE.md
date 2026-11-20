@@ -8,7 +8,7 @@
 - **MINOR**：新增向后兼容的功能（如新增配置项、浮层样式）
 - **PATCH**：向后兼容的 bug 修复
 
-当前版本：`1.0.0`
+当前版本：`2.0.0`
 
 ### 资产文件命名
 
@@ -17,9 +17,9 @@ WheelVolume-v<VERSION>-arm64.dmg
 WheelVolume-v<VERSION>-arm64.zip
 ```
 
-示例：`WheelVolume-v1.0.0-arm64.dmg`
+示例：`WheelVolume-v2.0.0-arm64.dmg`
 
-- `v` 前缀与 GitHub Release tag 一致（tag 为 `v1.0.0`）
+- `v` 前缀与 GitHub Release tag 一致（tag 为 `v2.0.0`）
 - `arm64` 明确架构，避免用户误下载
 - DMG 供普通用户，ZIP 供脚本化部署
 
@@ -59,8 +59,8 @@ xcode-select --install
 脚本会：
 
 1. 校验架构为 arm64，否则退出
-2. 编译 `arm64-apple-macos11.0` 二进制
-3. 组装 `WheelVolume.app`（写入 Info.plist、config.json）
+2. 编译 `arm64-apple-macos13.0` 二进制
+3. 组装 `WheelVolume.app`（写入 Info.plist、绘制并嵌入 AppIcon.icns）
 4. 生成 DMG 与 ZIP 到 `dist/`
 5. 打印 SHA-256 校验值
 
@@ -79,8 +79,8 @@ xcode-select --install
 
 ```bash
 git add -A
-git commit -m "release: v1.0.0"
-git tag -a v1.0.0 -m "WheelVolume v1.0.0"
+git commit -m "release: v2.0.0"
+git tag -a v2.0.0 -m "WheelVolume v2.0.0"
 git push origin main --tags
 ```
 
@@ -88,10 +88,10 @@ git push origin main --tags
 
 在 GitHub 仓库页面 → Releases → Draft a new release：
 
-- Tag：`v1.0.0`
-- Title：`WheelVolume v1.0.0`
+- Tag：`v2.0.0`
+- Title：`WheelVolume v2.0.0`
 - 描述：粘贴 `CHANGELOG.md` 中该版本的内容
-- 上传资产：`dist/WheelVolume-v1.0.0-arm64.dmg`、`dist/WheelVolume-v1.0.0-arm64.zip`
+- 上传资产：`dist/WheelVolume-v2.0.0-arm64.dmg`、`dist/WheelVolume-v2.0.0-arm64.zip`
 - 发布（预发布版勾选 pre-release）
 
 ### 7. 签名（可选，持有开发者证书时）
@@ -103,7 +103,7 @@ codesign --force --deep --sign "Developer ID Application: <Name> (<TEAMID>)" \
   --options runtime --timestamp dist/WheelVolume.app
 
 # 公证（需 xcrun notarytool 配置凭据）
-xcrun notarytool submit dist/WheelVolume-v1.0.0-arm64.zip \
+xcrun notarytool submit dist/WheelVolume-v2.0.0-arm64.zip \
   --keychain-profile "AC_PASSWORD" --wait
 xcrun stapler staple dist/WheelVolume.app
 ```

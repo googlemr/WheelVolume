@@ -1,65 +1,60 @@
-WheelVolume — 安装说明
+WheelVolume 2.0.0 — 安装说明
 ================================================
 
-【最简单的方式】
+【安装（推荐，两步）】
 
-  双击打开「安装.command」，按提示操作即可。
-  它会自动完成：复制到"应用程序"、清除隔离标记、本地签名、启动程序。
+  1. 把左边的 WheelVolume.app 拖到右边的「应用程序」文件夹。
+  2. 打开「应用程序」，双击 WheelVolume。
 
-  如果双击「安装.command」提示"无法打开，因为无法验证开发者"：
-  右键点击它 → 选择"打开" → 在弹窗里再点"打开"。
-
-  如果右键也打不开，请在"终端"里执行（把文件拖进终端可自动补全路径）：
-
-      bash "/Volumes/WheelVolume/安装.command"
+  首次打开可能提示"Apple 无法验证"：
+    系统设置 > 隐私与安全性 → 页面下方点「仍要打开」
+    （macOS 15 之后 Apple 移除了右键打开的快捷方式，必须走这里一次）
 
 
-【为什么会提示"已损坏"】
+【如果双击提示"已损坏"或"没有响应"】
 
-  本工具没有 Apple 付费开发者证书（每年 99 美元），无法做公证。
-  macOS 会给从网络下载的文件打上隔离标记，Gatekeeper 遇到未公证的
-  应用就报"已损坏，应移到废纸篓"——这并不意味着文件真的损坏。
+  这是旧版本（1.x）遗留的问题，2.0.0 已修复。若仍遇到，双击
+  「安装.command」按提示操作，它会：停止旧进程 → 清理 1.x 残留
+  → 复制到应用程序 → 清除隔离标记 → 校验签名 → 启动。
 
-  解决办法就是清除隔离标记，安装脚本已自动处理。
-
-
-【手动安装（不喜欢用脚本时）】
-
-  1. 把 WheelVolume.app 拖到"应用程序"文件夹
-  2. 打开"终端"，执行：
-
-      xattr -dr com.apple.quarantine /Applications/WheelVolume.app
-      codesign --force --deep --sign - /Applications/WheelVolume.app
-      open /Applications/WheelVolume.app
-
-  3. 到 系统设置 > 隐私与安全性 > 辅助功能，勾选 WheelVolume
+  若提示"无法打开，因为无法验证开发者"，同样去
+  系统设置 > 隐私与安全性 点「仍要打开」。
 
 
-【必做的授权】
+【首次运行必做：授予辅助功能权限】
 
-  WheelVolume 需要"辅助功能"权限才能接收滚轮事件。
-  路径：系统设置 > 隐私与安全性 > 辅助功能 → 勾选 WheelVolume
+  程序启动后会自动弹出设置窗口，点「去授权」，在
+  系统设置 > 隐私与安全性 > 辅助功能 中勾选 WheelVolume。
 
-  不授权的话程序在运行，但滚动滚轮不会有任何反应。
+  没有这个权限，程序能运行但收不到滚轮事件。
 
 
-【使用方法】
+【怎么用】
 
-  按住 Option（或 Fn）键，同时滚动鼠标滚轮：
+  按住 Option（⌥）或 Fn（地球键），同时滚动滚轮：
     上滑 → 减小音量
-    下滑 → 增加音量
+    下滑 → 增大音量
 
-  每次滚动 2%，可无级细调。屏幕会出现音量浮层。
+  菜单栏会出现扬声器图标；屏幕中央出现音量浮层。
+
+
+【设置】
+
+  点菜单栏的扬声器图标 → 「设置…」，可以调整：
+    · 每格调节的精细度（0.2% ~ 10%，默认 2%）
+    · 触发键（Option / Fn 可分别开关）
+    · 响应间隔（越顺滑或越稳重）
+    · 反转方向、音量浮层、菜单栏百分比
+    · 登录时自动启动
 
 
 【卸载】
 
-  在"终端"执行：
+  1. 菜单栏图标 → 设置… → 关闭「登录时自动启动」 → 点「退出」
+  2. 把「应用程序」里的 WheelVolume 拖到废纸篓
 
-      launchctl unload ~/Library/LaunchAgents/com.shanlin.WheelVolume.plist 2>/dev/null
-      rm -f ~/Library/LaunchAgents/com.shanlin.WheelVolume.plist
-      rm -rf /Applications/WheelVolume.app
-      rm -rf "$HOME/Library/Application Support/WheelVolume"
+  如需彻底清除配置：
+    终端执行  defaults delete com.shanlin.WheelVolume
 
 
 项目主页：https://github.com/googlemr/WheelVolume

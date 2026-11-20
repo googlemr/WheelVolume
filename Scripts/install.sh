@@ -1,77 +1,46 @@
 #!/usr/bin/env bash
-# WheelVolume 安装脚本：复制 App 到「应用程序」并配置 LaunchAgent 登录自启
+# 开发机本地安装：复制构建产物到「应用程序」并清理隔离标记
+# 开机自启改由 App 内的「设置 → 登录时自动启动」控制，不再写死 LaunchAgent
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC_APP="${1:-$ROOT/dist/WheelVolume.app}"
 DEST_APP="/Applications/WheelVolume.app"
-AGENT="$HOME/Library/LaunchAgents/com.shanlin.WheelVolume.plist"
-LABEL="com.shanlin.WheelVolume"
 
-echo "==> WheelVolume 安装"
+echo "==> 本地安装 WheelVolume"
 
 if [ "$(uname -m)" != "arm64" ]; then
     echo "错误：仅支持 Apple Silicon (arm64)。" >&2
     exit 1
 fi
-
 if [ ! -d "$SRC_APP" ]; then
-    echo "错误：找不到源 App：$SRC_APP" >&2
-    echo "请先执行 ./Scripts/build.sh 或从 Release 下载 DMG。" >&2
+    echo "错误：找不到源 App：$SRC_APP。请先执行 ./Scripts/build.sh。" >&2
     exit 1
 fi
 
-# 1) 停止旧服务
-launchctl unload "$AGENT" 2>/dev/null || true
+# 1) 停止已运行实例
+pkill -x WheelVolume >/dev/null 2>&1 || true
+sleep 1
 
-# 2) 复制 App
-echo "==> 安装到 $DEST_APP"
+# 2) 清理 1.x 的脚本安装残留
+launchctl bootout "gui/$(id -u)/com.dushanlin.WheelVolume" >/dev/null 2>&1 || true
+rm -f "$HOME/Library/LaunchAgents/com.dushanlin.WheelVolume.plist"
+rm -rf "$HOME/Applications/WheelVolume.app"
+
+# 3) 复制并清除隔离标记
 rm -rf "$DEST_APP"
 cp -R "$SRC_APP" "$DEST_APP"
-
-# 2.1) 清除隔离标记并本地重新签名
-# 从网络下载的包会带 com.apple.quarantine，Gatekeeper 会拦截未公证应用，
-# 表现为"已损坏，应移到废纸篓"。这里清除标记并对 bundle 重新 ad-hoc 签名。
-echo "==> 清除隔离标记并签名"
 xattr -dr com.apple.quarantine "$DEST_APP" 2>/dev/null || true
-codesign --force --deep --sign - "$DEST_APP" >/dev/null 2>&1 || true
-codesign --verify "$DEST_APP" >/dev/null 2>&1 \
-    && echo "    签名校验通过" \
-    || echo "    警告：签名校验失败，请检查 App 包完整性"
 
-# 3) 写入 LaunchAgent
-mkdir -p "$(dirname "$AGENT")"
-cat > "$AGENT" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>$LABEL</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>$DEST_APP/Contents/MacOS/WheelVolume</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/tmp/wheelvolume/out.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/wheelvolume/err.log</string>
-</dict>
-</plist>
-EOF
+# 4) 校验签名（构建时已签好，正常情况下无需重签）
+if codesign --verify --deep --strict "$DEST_APP" >/dev/null 2>&1; then
+    echo "    签名校验通过"
+else
+    echo "    签名异常，重新 ad-hoc 签名"
+    codesign --force --deep --sign - "$DEST_APP"
+    codesign --verify --deep --strict "$DEST_APP"
+fi
 
-# 4) 加载自启
-echo "==> 配置开机自启"
-launchctl load -w "$AGENT" 2>/dev/null || echo "提示：launchctl 未能立即加载，将在下次登录后自动生效。"
-
+open "$DEST_APP"
 echo
-echo "==> 安装完成。"
-echo "接下来请授予辅助功能权限："
-echo "  系统设置 → 隐私与安全性 → 辅助功能 → 勾选 WheelVolume"
-echo "（如未自动弹出授权窗口，手动打开一次 $DEST_APP）"
-echo
-echo "验证：按住 Option + 滚轮，上滑减小音量、下滑增加音量。"
+echo "==> 完成。请到 系统设置 → 隐私与安全性 → 辅助功能 勾选 WheelVolume。"

@@ -8,6 +8,45 @@
 
 （暂无）
 
+## [2.0.0] - 2026-11-20
+
+一次结构性重写：修掉"打开时没有响应"，并补齐图标与图形化设置。
+
+### 修复
+
+- **打开报"应用程序没有响应"（核心）**：1.x 的 `.app` 内只是命令行程序，
+  直接用 `CFRunLoopRun()` 挂起进程，从不初始化 `NSApplication`。
+  LaunchServices 收不到应用启动回执，Finder 等超时后判定为无响应。
+  2.0.0 改为标准 AppKit 应用（`NSApplication` + `AppDelegate` + 菜单栏常驻），
+  启动到 check-in 约 0.5 秒。
+- 事件监听回调内不再做视图操作，并处理 `tapDisabledByTimeout` 自动重启监听，
+  避免长时间使用后被系统静音事件。
+- 外接显示器 / USB 声卡没有"主音量"通道时，自动回退到声道级音量控制。
+
+### 新增
+
+- **应用图标**：`Scripts/make-icon.swift` 用 Core Graphics 绘制 1024px 源图并生成
+  `AppIcon.icns`，构建时自动重绘，仓库不含外部素材。
+- **设置窗口**（SwiftUI）：调节精细度（0.2%–10% + 四档预设）、触发键分别开关、
+  响应间隔、方向反转、音量浮层、菜单栏百分比、登录时自动启动、恢复默认。
+- **菜单栏控制**：显示当前音量、直达设置、直达辅助功能授权页、关于、退出。
+- 权限状态实时检测：在系统设置里勾选后 1 秒内自动开始监听，无需重启。
+- `--render-settings <png>`：离屏渲染设置界面，供 CI 做界面冒烟测试。
+
+### 变更
+
+- 设置改用 `UserDefaults`（bundle id 不变），首次启动自动迁移 1.x 的
+  `config.json` 后删除。
+- 最低系统版本提升到 macOS 13.0，编译目标 `arm64-apple-macos13.0`。
+- DMG 改为「拖拽到应用程序」布局（含 `应用程序` 快捷方式），`安装.command`
+  保留为一键安装备选方案，并会清理 1.x 的脚本安装残留。
+- ZIP 改用 `ditto` 打包，保留符号链接与权限。
+
+### 移除
+
+- 不再随包分发 `config.json`，也不再由安装脚本写死 LaunchAgent 的
+  `KeepAlive`；开机自启改由应用内开关管理。
+
 ## [1.0.1] - 2026-11-20
 
 修复安装包被 macOS 判定为"已损坏，无法打开"的问题。
@@ -46,5 +85,6 @@
 - Apple Silicon 运行时校验，拒绝 Rosetta 环境。
 - 完整开源项目文档、Issue/PR 模板、CI 构建工作流。
 
-[Unreleased]: https://github.com/googlemr/WheelVolume/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/googlemr/WheelVolume/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/googlemr/WheelVolume/releases/tag/v2.0.0
 [1.0.0]: https://github.com/googlemr/WheelVolume/releases/tag/v1.0.0
