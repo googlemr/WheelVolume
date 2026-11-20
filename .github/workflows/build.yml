@@ -1,0 +1,65 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-arm64:
+    name: 构建 (arm64)
+    # macos-14 runner 为 Apple Silicon (arm64)
+    runs-on: macos-14
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 确认架构为 arm64
+        run: |
+          echo "uname -m: $(uname -m)"
+          test "$(uname -m)" = "arm64"
+
+      - name: 编译验证
+        run: |
+          swiftc -O -target arm64-apple-macos11.0 \
+            -o /tmp/WheelVolume src/WheelVolume.swift
+          lipo -archs /tmp/WheelVolume
+          /tmp/WheelVolume --version
+          /tmp/WheelVolume --help
+
+      - name: 构建发布物
+        run: ./Scripts/build.sh
+
+      - name: 校验发布物
+        run: |
+          test -f dist/WheelVolume.app/Contents/MacOS/WheelVolume
+          ./dist/WheelVolume.app/Contents/MacOS/WheelVolume --version
+          (cd dist && shasum -a 256 -c SHA256SUMS.txt)
+
+      - name: 上传构建产物 (Actions artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: WheelVolume-arm64
+          path: dist/*
+          if-no-files-found: error
+
+      # 仅在推送 v* tag 时创建/更新 GitHub Release 并上传安装包
+      - name: 发布 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: WheelVolume ${{ github.ref_name }}
+          body_path: CHANGELOG.md
+          generate_release_notes: true
+          files: |
+            dist/*.dmg
+            dist/*.zip
+            dist/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

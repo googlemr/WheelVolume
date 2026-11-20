@@ -1,0 +1,8 @@
+{
+  "step": 0.02,
+  "minInterval": 0.025,
+  "useOption": true,
+  "useFn": true,
+  "invert": false,
+  "showOSD": true
+}

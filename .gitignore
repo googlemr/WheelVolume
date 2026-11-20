@@ -1,0 +1,31 @@
+# 构建产物
+dist/
+*.app/
+*.dmg
+*.zip
+build/
+
+# 编译中间物
+*.o
+*.swiftmodule
+*.swiftdoc
+WheelVolume
+!src/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# IDE
+.vscode/
+.idea/
+*.xcuserstate
+xcuserdata/
+
+# 日志
+*.log
+
+# 用户配置（不应入库）
+config.local.json

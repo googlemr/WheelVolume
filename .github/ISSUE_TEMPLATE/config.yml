@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用问题 / 讨论
+    url: https://github.com/googlemr/WheelVolume/discussions
+    about: 使用疑问、经验分享请到 Discussions，bug 请用 Bug 报告模板
+  - name: 安全问题（私密）
+    url: https://github.com/googlemr/WheelVolume/security/advisories/new
+    about: 安全漏洞请勿公开提交，使用此私有渠道

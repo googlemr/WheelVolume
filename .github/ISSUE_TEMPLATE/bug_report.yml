@@ -1,0 +1,63 @@
+name: Bug 报告
+description: 报告 WheelVolume 的异常行为
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢报告问题。请尽量填写完整，便于复现定位。提交前请先查看 [FAQ](https://github.com/googlemr/WheelVolume/blob/main/docs/FAQ.md)。
+  - type: input
+    id: version
+    attributes:
+      label: WheelVolume 版本
+      description: 执行 `WheelVolume --version` 的输出
+      placeholder: "WheelVolume 1.0.0 (arm64-apple-macos11.0)"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS 版本
+      placeholder: "例如 14.5 (23F79)"
+    validations:
+      required: true
+  - type: input
+    id: chip
+    attributes:
+      label: 芯片型号
+      placeholder: "例如 M2 Pro"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: 问题描述
+      description: 发生了什么？预期是什么？
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 启动 WheelVolume
+        2. 按住 Option 滚动
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志
+      description: 粘贴 `/tmp/wheelvolume/err.log` 内容
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 确认事项
+      options:
+        - label: 已授予辅助功能权限并重启过程序
+          required: false
+        - label: 已搜索过现有 Issue，确认不是重复问题
+          required: true
