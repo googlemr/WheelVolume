@@ -46,27 +46,41 @@ README、安装说明、使用说明、权限说明、常见问题、更新日�
 - ZIP：结构干净，无 `__MACOSX`
 - 校验和：DMG/ZIP 均 OK
 
-## 唯一待你操作：推送到 GitHub（约 2 分钟）
+## 推送故障排查与修复记录（2026-11-20）
 
-我检测到的 GitHub 账号是 `googlemr`，文档链接已按此写好。我尝试用当前集成的 GitHub token 自动创建仓库，但被拒绝（HTTP 403：Resource not accessible by integration）——该 token 无建仓权限，这是授权范围限制，无法通过代码绕过。所以最后一步需要你在终端亲自执行。
+### 症状
+终端执行 push 后长时间无响应，最终报：
+`fatal: unable to access 'https://github.com/googlemr/WheelVolume.git/': Recv failure: Operation timed out`
 
-**第一步（一次性，网页操作）**：打开 https://github.com/new ，仓库名填 `WheelVolume`，保持**空仓库**（不要勾 README / license / .gitignore），点 Create repository。
+### 根因（两个独立问题）
+1. **网络超时**：本机 git 没有配置代理，而你通过 v2rayN（xray，监听 `127.0.0.1:10808`）联网。git 直连 GitHub 被墙导致超时。`curl` 能通是因为环境变量里有 `https_proxy=http://127.0.0.1:56674`，但 git 不读该变量。
+2. **提交历史分叉**：网页建仓库时生成了 `Initial commit`（`4d60163`，仅一行 README），本地 `release: v1.0.0`（`f0fc7a9`）与之无共同祖先，直接 push 会 `non-fast-forward` 被拒。
 
-**第二步**：在终端只粘贴下面这一行（不要复制带中文注释的多行命令——注释里的括号会导致 `zsh: parse error`）：
+### 已修复（我已完成，无需你操作）
+- ✅ 探测到可用代理 `127.0.0.1:10808`，`git ls-remote` 验证通过（HTTP 200）。
+- ✅ 用 `--allow-unrelated-histories` 合并了远端与本地历史，保留完整本地 README，生成合并提交 `6d154e6`。
+- ✅ 本地 tag `v1.0.0` 已建好，工作区干净。
+- ✅ 重写 `publish.sh`：自动探测代理端口（10808/10809/7890/7897/56674）、幂等处理 init/commit、支持 `GH_TOKEN` 环境变量注入凭据。语法校验通过，`push --dry-run` 确认网络层打通（到达认证提示，不再超时）。
+
+### 唯一剩余阻塞：认证
+本机没有任何 GitHub 凭据（无 gh CLI、无 SSH key、钥匙串无条目、无环境变量 Token），GitHub 集成 token 只读（写操作 403）。**push 必须提供你的 GitHub 凭据**——这是 GitHub 的安全机制，无法绕过。
+
+### 你需要做的（二选一）
+
+**方式 A（推荐，最快）**：生成一个 Personal Access Token 后，在终端执行一行命令：
 
 ```bash
-bash "/Users/d/WorkBuddy/2026-11-19-17-14-07/WheelVolume/publish.sh"
+GH_TOKEN='你的token' bash "/Users/d/WorkBuddy/2026-11-19-17-14-07/WheelVolume/publish.sh"
 ```
 
-`publish.sh` 已包含 init、commit、绑定 remote、push、打 tag、push tag 全部步骤，且预设了 git 身份。 push 时会弹 GitHub 登录窗口，用浏览器或 Personal Access Token 完成认证即可（本机当前没有任何 git 凭据，这是唯一必须由你完成的人工认证）。
+生成 Token：打开 https://github.com/settings/tokens → Generate new token → **Classic** → 勾选 `repo` 权限 → 生成并复制。（Fine-grained token 需给该仓库 Contents 读写权限。）
 
-**Release 会自动生成**：push 了 `v*` tag 后，`.github/workflows/build.yml` 会在 macos-14 (arm64) runner 上编译、生成 DMG/ZIP、校验 SHA-256，并自动创建 Release 把 `.dmg`/`.zip`/`SHA256SUMS.txt` 上传为可下载资产（`body` 取自 CHANGELOG）。你无需手动上传二进制。
+**方式 B（不用 Token）**：直接在终端执行 `bash "/Users/d/WorkBuddy/2026-11-19-17-14-07/WheelVolume/publish.sh"`，push 时 git 会提示输入用户名（`googlemr`）和密码——密码处填 PAT。
 
-手动上传仅在你想不用 CI 时才有必要：仓库 Releases 页 → Draft a new release → Tag `v1.0.0` → 上传 `dist/` 三个资产。
+脚本会自动配代理、推送代码、推送 tag。**tag 一推，CI 会自动构建并发布带 DMG/ZIP 的 Release**，无需手动上传二进制。
 
-> 若你的 GitHub 用户名不是 `googlemr`，全局替换文档链接：
+> 若你的 GitHub 用户名不是 `googlemr`，需全局替换文档链接并改 `publish.sh` 中的 remote 地址：
 > `grep -rl "googlemr/WheelVolume" . | xargs sed -i '' 's|googlemr/WheelVolume|<你的用户名>/WheelVolume|g'`
-> 并相应修改上面 `git remote add origin` 的地址。
 
 ## 发布后需回补的两点
 
