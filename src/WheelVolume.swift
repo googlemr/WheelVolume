@@ -1,4 +1,4 @@
-// WheelVolume — 用 Option / Fn(地球键) + 滚轮无级调节 macOS 系统音量
+// WheelVolume — 屏幕顶部边缘热区滚轮：不按 Ctrl 调音量，按住 Ctrl 调亮度
 // 仅支持 Apple Silicon (arm64)
 // SPDX-License-Identifier: MIT
 
@@ -11,7 +11,7 @@ import ApplicationServices
 
 // MARK: - 元信息
 
-let APP_VERSION = "2.0.0"
+let APP_VERSION = "2.1.0"
 let APP_NAME = "WheelVolume"
 let BUNDLE_ID = "com.shanlin.WheelVolume"
 let AX_PANE_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
@@ -19,65 +19,29 @@ let AX_PANE_URL = "x-apple.systempreferences:com.apple.preference.security?Priva
 // MARK: - 偏好设置
 
 struct Prefs {
-    var step: Float32 = 0.02          // 每格步进（0.02 = 2%）
-    var minInterval: Double = 0.025   // 两次调节的最小间隔（秒）
-    var useOption = true              // Option(⌥) 触发
-    var useFn = true                  // Fn / 地球键 触发
-    var invert = false                // 反转方向
-    var showOSD = true                // 显示音量浮层
-    var showPercentInMenuBar = false  // 菜单栏显示百分比
-    var launchAtLogin = false         // 开机自动启动
+    var hotZoneHeight: Double = 8      // 屏幕顶部热区高度（点）
+    var minInterval: Double = 0        // 两次调节的最小间隔（秒），0 = 每次滚动都响应
+    var showPercentInMenuBar = false   // 菜单栏显示音量百分比
+    var launchAtLogin = false          // 开机自动启动
 }
 
-/// 运行期快照：滚轮回调在主线程序列读取，界面改动时同步刷新。
 var prefs = Prefs()
 
 enum PrefKey {
-    static let step = "step"
+    static let hotZoneHeight = "hotZoneHeight"
     static let minInterval = "minInterval"
-    static let useOption = "useOption"
-    static let useFn = "useFn"
-    static let invert = "invert"
-    static let showOSD = "showOSD"
     static let showPercentInMenuBar = "showPercentInMenuBar"
     static let launchAtLogin = "launchAtLogin"
-
-    static let all = [step, minInterval, useOption, useFn, invert, showOSD,
-                      showPercentInMenuBar, launchAtLogin]
 }
 
-/// 读取用户设置。首次运行会把 v1.x 的 config.json 迁移过来。
 func loadPrefs() -> Prefs {
     let d = UserDefaults.standard
     var p = Prefs()
-    if d.object(forKey: PrefKey.step) != nil {
-        p.step = Float32(d.double(forKey: PrefKey.step))
-        p.minInterval = d.double(forKey: PrefKey.minInterval)
-        p.useOption = d.bool(forKey: PrefKey.useOption)
-        p.useFn = d.bool(forKey: PrefKey.useFn)
-        p.invert = d.bool(forKey: PrefKey.invert)
-        p.showOSD = d.bool(forKey: PrefKey.showOSD)
-        p.showPercentInMenuBar = d.bool(forKey: PrefKey.showPercentInMenuBar)
-        p.launchAtLogin = d.bool(forKey: PrefKey.launchAtLogin)
-        return p
-    }
-
-    // v1.x 迁移：~/Library/Application Support/WheelVolume/config.json
-    let fm = FileManager.default
-    if let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-        let legacy = base.appendingPathComponent(APP_NAME, isDirectory: true)
-            .appendingPathComponent("config.json")
-        if let data = try? Data(contentsOf: legacy),
-           let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
-            if let v = json["step"] as? NSNumber { p.step = Float32(v.doubleValue) }
-            if let v = json["minInterval"] as? NSNumber { p.minInterval = v.doubleValue }
-            if let v = json["useOption"] as? Bool { p.useOption = v }
-            if let v = json["useFn"] as? Bool { p.useFn = v }
-            if let v = json["invert"] as? Bool { p.invert = v }
-            if let v = json["showOSD"] as? Bool { p.showOSD = v }
-            try? fm.removeItem(at: legacy)
-        }
-    }
+    guard d.object(forKey: PrefKey.hotZoneHeight) != nil else { return p }
+    p.hotZoneHeight = d.double(forKey: PrefKey.hotZoneHeight)
+    p.minInterval = d.double(forKey: PrefKey.minInterval)
+    p.showPercentInMenuBar = d.bool(forKey: PrefKey.showPercentInMenuBar)
+    p.launchAtLogin = d.bool(forKey: PrefKey.launchAtLogin)
     return p
 }
 
@@ -91,15 +55,12 @@ enum LoginItem {
     }
     static var isEnabled: Bool { FileManager.default.fileExists(atPath: plistURL.path) }
 
-    static func set(_ on: Bool) {
-        on ? write() : remove()
-    }
+    static func set(_ on: Bool) { on ? write() : remove() }
 
     private static func write() {
         let fm = FileManager.default
         try? fm.createDirectory(at: plistURL.deletingLastPathComponent(),
                                 withIntermediateDirectories: true)
-        // 用 open -g 交给 LaunchServices，避免重复实例与激活抢占前台
         let dict: [String: Any] = [
             "Label": label,
             "ProgramArguments": ["/usr/bin/open", "-g", "-a", Bundle.main.bundlePath],
@@ -131,62 +92,45 @@ enum LoginItem {
     }
 }
 
-// MARK: - 应用状态（设置界面 ↔ 运行时）
+// MARK: - 应用状态
 
 final class AppState: ObservableObject {
     static let shared = AppState()
 
-    @Published var step: Double { didSet { persist() } }
+    @Published var hotZoneHeight: Double { didSet { persist() } }
     @Published var minInterval: Double { didSet { persist() } }
-    @Published var useOption: Bool { didSet { persist() } }
-    @Published var useFn: Bool { didSet { persist() } }
-    @Published var invert: Bool { didSet { persist() } }
-    @Published var showOSD: Bool { didSet { persist() } }
     @Published var showPercentInMenuBar: Bool { didSet { persist() } }
     @Published var launchAtLogin: Bool { didSet { persist(); LoginItem.set(launchAtLogin) } }
     @Published var trusted: Bool = false
+    @Published var brightnessSupported: Bool = ScreenBrightness.canChange()
 
     private var loading = false
 
     private init() {
         let p = loadPrefs()
         loading = true
-        step = Double(p.step)
+        hotZoneHeight = p.hotZoneHeight
         minInterval = p.minInterval
-        useOption = p.useOption
-        useFn = p.useFn
-        invert = p.invert
-        showOSD = p.showOSD
         showPercentInMenuBar = p.showPercentInMenuBar
         launchAtLogin = LoginItem.isEnabled
         loading = false
         push()
     }
 
-    /// 写回 UserDefaults
     private func persist() {
         guard !loading else { return }
         let d = UserDefaults.standard
-        d.set(step, forKey: PrefKey.step)
+        d.set(hotZoneHeight, forKey: PrefKey.hotZoneHeight)
         d.set(minInterval, forKey: PrefKey.minInterval)
-        d.set(useOption, forKey: PrefKey.useOption)
-        d.set(useFn, forKey: PrefKey.useFn)
-        d.set(invert, forKey: PrefKey.invert)
-        d.set(showOSD, forKey: PrefKey.showOSD)
         d.set(showPercentInMenuBar, forKey: PrefKey.showPercentInMenuBar)
         d.set(launchAtLogin, forKey: PrefKey.launchAtLogin)
         push()
         NotificationCenter.default.post(name: .wheelVolumePrefsChanged, object: nil)
     }
 
-    /// 同步到运行期快照
     func push() {
-        prefs.step = Float32(step)
+        prefs.hotZoneHeight = hotZoneHeight
         prefs.minInterval = minInterval
-        prefs.useOption = useOption
-        prefs.useFn = useFn
-        prefs.invert = invert
-        prefs.showOSD = showOSD
         prefs.showPercentInMenuBar = showPercentInMenuBar
         prefs.launchAtLogin = launchAtLogin
     }
@@ -194,12 +138,8 @@ final class AppState: ObservableObject {
     func reset() {
         loading = true
         let p = Prefs()
-        step = Double(p.step)
+        hotZoneHeight = p.hotZoneHeight
         minInterval = p.minInterval
-        useOption = p.useOption
-        useFn = p.useFn
-        invert = p.invert
-        showOSD = p.showOSD
         showPercentInMenuBar = false
         loading = false
         persist()
@@ -210,7 +150,33 @@ extension Notification.Name {
     static let wheelVolumePrefsChanged = Notification.Name("WheelVolumePrefsChanged")
 }
 
-// MARK: - CoreAudio 音量
+// MARK: - 顶部边缘热区
+
+enum HotZone {
+    /// 使用 CoreGraphics 全局坐标：原点在主显示器左上角，y 向下增大。
+    /// 多显示器时按鼠标所在显示器的上边缘计算，兼容位于主屏上方的显示器。
+    static func contains(_ point: CGPoint) -> Bool {
+        var count: UInt32 = 0
+        var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+        guard CGGetDisplaysWithPoint(point, 16, &ids, &count) == CGError.success, count > 0 else {
+            return false
+        }
+        let frame = CGDisplayBounds(ids[0])
+        return point.y >= frame.origin.y &&
+               point.y <= frame.origin.y + CGFloat(max(0, prefs.hotZoneHeight))
+    }
+
+    static func display(for point: CGPoint) -> CGDirectDisplayID {
+        var count: UInt32 = 0
+        var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+        if CGGetDisplaysWithPoint(point, 16, &ids, &count) == CGError.success, count > 0 {
+            return ids[0]
+        }
+        return CGMainDisplayID()
+    }
+}
+
+// MARK: - 系统音量（CoreAudio）
 
 enum Volume {
     static func defaultOutput() -> AudioDeviceID {
@@ -225,7 +191,6 @@ enum Volume {
         return err == noErr ? device : 0
     }
 
-    /// 依次尝试主元素与声道元素，兼容不支持主音量的外置声卡 / 显示器
     private static let candidates: [UInt32] = [kAudioObjectPropertyElementMain, 1, 2]
 
     private static func address(_ selector: AudioObjectPropertySelector,
@@ -292,125 +257,110 @@ enum Volume {
     }
 }
 
-// MARK: - 音量浮层（HUD）
+// MARK: - 系统亮度（DisplayServices 私有框架，Apple 内置显示器）
 
-final class VolumeHUD {
-    private var panel: NSPanel?
-    private var barFill: NSView?
-    private var barTrack: NSView?
-    private var percentLabel: NSTextField?
-    private var iconView: NSImageView?
-    private var hideTask: DispatchWorkItem?
+enum ScreenBrightness {
+    private typealias GetFn = @convention(c) (CGDirectDisplayID, UnsafeMutablePointer<Float>) -> Int32
+    private typealias SetFn = @convention(c) (CGDirectDisplayID, Float) -> Int32
+    private typealias BoolFn = @convention(c) (CGDirectDisplayID) -> Bool
 
-    private let width: CGFloat = 236
-    private let height: CGFloat = 84
-    private let barWidth: CGFloat = 150
+    private static let handle: UnsafeMutableRawPointer? = dlopen(
+        "/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices", RTLD_NOW)
+    private static let getFn: GetFn? = {
+        guard let p = dlsym(handle, "DisplayServicesGetBrightness") else { return nil }
+        return unsafeBitCast(p, to: GetFn.self)
+    }()
+    private static let setFn: SetFn? = {
+        guard let p = dlsym(handle, "DisplayServicesSetBrightness") else { return nil }
+        return unsafeBitCast(p, to: SetFn.self)
+    }()
+    private static let canFn: BoolFn? = {
+        guard let p = dlsym(handle, "DisplayServicesCanChangeBrightness") else { return nil }
+        return unsafeBitCast(p, to: BoolFn.self)
+    }()
 
-    private func build() -> NSPanel {
-        let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
-                        styleMask: [.borderless, .nonactivatingPanel],
-                        backing: .buffered, defer: false)
-        p.isOpaque = false
-        p.backgroundColor = .clear
-        p.hasShadow = true
-        p.level = .statusBar
-        p.ignoresMouseEvents = true
-        p.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
-
-        let blur = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        blur.material = .hudWindow
-        blur.blendingMode = .behindWindow
-        blur.state = .active
-        blur.wantsLayer = true
-        blur.layer?.cornerRadius = 18
-        blur.layer?.masksToBounds = true
-        p.contentView = blur
-
-        let icon = NSImageView(frame: NSRect(x: 18, y: 30, width: 26, height: 26))
-        icon.image = NSImage(systemSymbolName: "speaker.wave.2.fill",
-                             accessibilityDescription: "音量")
-        icon.contentTintColor = .white
-        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 19, weight: .medium)
-        blur.addSubview(icon)
-        iconView = icon
-
-        let label = NSTextField(labelWithString: "0%")
-        label.frame = NSRect(x: 52, y: 48, width: 70, height: 20)
-        label.textColor = .white
-        label.font = .monospacedDigitSystemFont(ofSize: 15, weight: .semibold)
-        blur.addSubview(label)
-        percentLabel = label
-
-        let track = NSView(frame: NSRect(x: 52, y: 28, width: barWidth, height: 8))
-        track.wantsLayer = true
-        track.layer?.cornerRadius = 4
-        track.layer?.backgroundColor = NSColor(white: 1, alpha: 0.22).cgColor
-        blur.addSubview(track)
-        barTrack = track
-
-        let fill = NSView(frame: NSRect(x: 52, y: 28, width: 0, height: 8))
-        fill.wantsLayer = true
-        fill.layer?.cornerRadius = 4
-        fill.layer?.backgroundColor = NSColor(white: 1, alpha: 0.95).cgColor
-        blur.addSubview(fill)
-        barFill = fill
-
-        return p
+    static func canChange(_ display: CGDirectDisplayID = CGMainDisplayID()) -> Bool {
+        guard let canFn else { return false }
+        return canFn(display)
     }
 
-    func show(volume: Float32, muted: Bool) {
-        guard prefs.showOSD else { return }
-        let p = panel ?? build()
-        panel = p
-
-        let pct = Int((volume * 100).rounded())
-        percentLabel?.stringValue = muted ? "静音" : "\(pct)%"
-        let symbol = muted ? "speaker.slash.fill"
-            : (pct == 0 ? "speaker.fill" : (pct < 40 ? "speaker.wave.1.fill" : "speaker.wave.2.fill"))
-        iconView?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "音量")
-        barFill?.frame.size.width = muted ? 0 : CGFloat(volume) * barWidth
-        barTrack?.layer?.backgroundColor = NSColor(white: 1, alpha: muted ? 0.14 : 0.22).cgColor
-
-        if let screen = NSScreen.main {
-            let vf = screen.visibleFrame
-            let origin = NSPoint(x: vf.midX - width / 2, y: vf.minY + 96)
-            p.setFrameOrigin(origin)
-        }
-        if !p.isVisible {
-            p.alphaValue = 0
-            p.orderFrontRegardless()
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.13
-                p.animator().alphaValue = 1
-            }
-        } else {
-            p.orderFrontRegardless()
-        }
-
-        hideTask?.cancel()
-        let task = DispatchWorkItem { [weak self] in self?.fadeOut() }
-        hideTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.85, execute: task)
+    static func get(_ display: CGDirectDisplayID = CGMainDisplayID()) -> Int? {
+        guard let getFn else { return nil }
+        var value: Float = 0
+        guard getFn(display, &value) == 0 else { return nil }
+        return min(100, max(0, Int((value * 100).rounded())))
     }
 
-    private func fadeOut() {
-        guard let p = panel else { return }
-        NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.22
-            p.animator().alphaValue = 0
-        }, completionHandler: {
-            p.orderOut(nil)
-        })
+    @discardableResult
+    static func set(_ percent: Int, display: CGDirectDisplayID = CGMainDisplayID()) -> Bool {
+        guard let setFn else { return false }
+        let clamped = min(100, max(0, percent))
+        return setFn(display, Float(clamped) / 100) == 0
     }
 }
 
-// MARK: - 滚轮监听
+// MARK: - 系统自带 OSD 反馈（不绘制任何自定义界面）
+
+@objc private protocol OSDUIHelperProtocol {
+    func showImage(_ image: Int64, onDisplayID: UInt32, priority: UInt32,
+                   msecUntilFade: UInt32, filledChiclets: UInt32,
+                   totalChiclets: UInt32, locked: Bool)
+}
+
+enum NativeFeedback {
+    enum Kind {
+        case volume       // showosd: image 3
+        case brightness   // showosd: image 1
+
+        var imageID: Int64 { self == .volume ? 3 : 1 }
+    }
+
+    private static let connection: NSXPCConnection = {
+        let c = NSXPCConnection(serviceName: "com.apple.OSDUIHelper")
+        c.remoteObjectInterface = NSXPCInterface(with: OSDUIHelperProtocol.self)
+        c.resume()
+        return c
+    }()
+
+    /// 调用系统 OSDUIHelper 显示原生音量/亮度反馈。
+    /// macOS 26 起系统不再为程序化变更弹出该浮层；此处不会绘制任何替代界面。
+    static func show(_ kind: Kind, percent: Int, display: CGDirectDisplayID) {
+        guard let proxy = connection.remoteObjectProxy as? OSDUIHelperProtocol else { return }
+        proxy.showImage(kind.imageID,
+                        onDisplayID: display,
+                        priority: 0x1F4,
+                        msecUntilFade: 1200,
+                        filledChiclets: UInt32(min(100, max(0, percent))),
+                        totalChiclets: 100,
+                        locked: false)
+    }
+}
+
+// MARK: - 滚轮监听（仅屏幕顶部边缘热区生效）
+
+enum ScrollMode: Equatable {
+    case volume       // 未按 Ctrl
+    case brightness   // 按住 Ctrl
+}
+
+/// 纯逻辑，便于无权限环境下自检
+enum WheelLogic {
+    /// 向上滚动增加 1%，向下减少 1%，严格夹在 0–100
+    static func nextPercent(_ current: Int, increase: Bool) -> Int {
+        increase ? min(100, max(0, current) + 1) : max(0, min(100, current) - 1)
+    }
+
+    /// Ctrl 唯一决定模式，两种模式互斥
+    static func mode(controlDown: Bool) -> ScrollMode {
+        controlDown ? .brightness : .volume
+    }
+}
 
 final class ScrollTap {
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var lastAdjust: CFAbsoluteTime = 0
-    var onScroll: ((Bool) -> Void)?   // true = 增加音量
+    var onScroll: ((Bool, ScrollMode, CGDirectDisplayID) -> Void)?
 
     var isRunning: Bool { tap != nil }
 
@@ -428,9 +378,7 @@ final class ScrollTap {
             guard let refcon else { return Unmanaged.passUnretained(event) }
             let me = Unmanaged<ScrollTap>.fromOpaque(refcon).takeUnretainedValue()
             return me.handle(type: type, event: event)
-        }, userInfo: refcon) else {
-            return false
-        }
+        }, userInfo: refcon) else { return false }
 
         tap = port
         source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0)
@@ -446,7 +394,7 @@ final class ScrollTap {
         tap = nil
     }
 
-    /// 回调必须极快返回，否则系统会因超时禁用事件监听
+    /// 回调必须极快返回，否则系统会自动禁用事件监听
     private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
@@ -454,10 +402,9 @@ final class ScrollTap {
         }
         guard type == .scrollWheel else { return Unmanaged.passUnretained(event) }
 
-        let flags = event.flags
-        let optionDown = prefs.useOption && flags.contains(.maskAlternate)
-        let fnDown = prefs.useFn && flags.contains(.maskSecondaryFn)
-        guard optionDown || fnDown else { return Unmanaged.passUnretained(event) }
+        // 严格热区限制：鼠标不在顶部边缘时原样放行，绝不改动音量或亮度
+        let point = event.location
+        guard HotZone.contains(point) else { return Unmanaged.passUnretained(event) }
 
         let delta = event.getIntegerValueField(.scrollWheelEventDeltaAxis1)
         guard delta != 0 else { return Unmanaged.passUnretained(event) }
@@ -468,10 +415,12 @@ final class ScrollTap {
         }
         lastAdjust = now
 
-        // 规格：上滑（delta < 0）减小音量，下滑增加音量
-        var increase = delta > 0
-        if prefs.invert { increase.toggle() }
-        onScroll?(increase)
+        // CGEvent 的 deltaAxis1 正值代表向上滚动
+        let increase = delta > 0
+
+        // 两种模式互斥：Ctrl 只走亮度，绝不落到音量分支
+        let mode = WheelLogic.mode(controlDown: event.flags.contains(.maskControl))
+        onScroll?(increase, mode, HotZone.display(for: point))
 
         return nil   // 吞掉事件，页面不跟随滚动
     }
@@ -479,25 +428,21 @@ final class ScrollTap {
 
 // MARK: - 设置界面
 
-struct StepPreset: Identifiable {
+private struct HotZonePreset: Identifiable {
     let title: String
     let value: Double
     var id: Double { value }
 
-    static let all: [StepPreset] = [
-        StepPreset(title: "精细 1%", value: 0.01),
-        StepPreset(title: "标准 2%", value: 0.02),
-        StepPreset(title: "快速 5%", value: 0.05),
-        StepPreset(title: "很粗 10%", value: 0.1)
+    static let all: [HotZonePreset] = [
+        HotZonePreset(title: "窄 4pt", value: 4),
+        HotZonePreset(title: "标准 8pt", value: 8),
+        HotZonePreset(title: "宽 16pt", value: 16),
+        HotZonePreset(title: "很宽 32pt", value: 32)
     ]
 }
 
 struct SettingsView: View {
     @ObservedObject var s: AppState
-
-    private var stepText: String {
-        String(format: "%.1f%%", s.step * 100)
-    }
 
     var body: some View {
         Form {
@@ -510,10 +455,16 @@ struct SettingsView: View {
                         Text(s.trusted ? "已获得辅助功能权限" : "缺少「辅助功能」权限")
                             .fontWeight(.medium)
                         Text(s.trusted
-                             ? "按住 Option(⌥) 或 Fn 滚动滚轮即可调节音量。"
+                             ? "鼠标移到屏幕顶部边缘后滚动滚轮：不按 Ctrl 调音量，按住 Ctrl 调亮度。"
                              : "在系统设置中勾选 WheelVolume 后才能监听滚轮。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(s.brightnessSupported
+                             ? "当前显示器支持系统亮度控制。"
+                             : "当前显示器不支持系统亮度控制（Mac mini 外接显示器常见）。")
+                            .font(.caption)
+                            .foregroundStyle(s.brightnessSupported ? Color.secondary : Color.orange)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 6)
@@ -525,46 +476,51 @@ struct SettingsView: View {
                 }
             }
 
-            Section("触发键") {
-                Toggle("按住 Option (⌥) 时响应滚轮", isOn: $s.useOption)
-                Toggle("按住 Fn / 地球键时响应滚轮", isOn: $s.useFn)
-                if !s.useOption && !s.useFn {
-                    Text("两个触发键都已关闭，滚轮不会调节音量。")
-                        .font(.caption).foregroundStyle(.orange)
-                }
-            }
-
-            Section("调节精细度") {
+            Section("顶部边缘热区") {
                 HStack(spacing: 10) {
-                    Text("每格")
-                    Slider(value: $s.step, in: 0.002...0.1)
-                        .frame(minWidth: 180)
-                    Text(stepText)
+                    Text("高度")
+                    Slider(value: $s.hotZoneHeight, in: 2...48)
+                        .frame(minWidth: 170)
+                    Text("\(Int(s.hotZoneHeight)) pt")
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
-                        .frame(width: 48, alignment: .trailing)
+                        .frame(width: 52, alignment: .trailing)
                 }
                 HStack(spacing: 8) {
-                    ForEach(StepPreset.all) { preset in
-                        Button(preset.title) { s.step = preset.value }
+                    ForEach(HotZonePreset.all) { preset in
+                        Button(preset.title) { s.hotZoneHeight = preset.value }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                     }
                     Spacer()
                 }
+                Text("只有鼠标进入该区域，滚轮才会被接管；离开后滚轮恢复正常滚动。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("调节方式") {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.up.circle").foregroundStyle(.blue)
+                    Text("上滑 +1%")
+                    Image(systemName: "arrow.down.circle").foregroundStyle(.blue)
+                    Text("下滑 −1%")
+                    Spacer()
+                }
+                Text("音量与亮度都在 0%–100% 边界处停止，不会越界。")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("手感与外观") {
                 Picker("调节间隔", selection: $s.minInterval) {
-                    Text("极顺滑（不限制）").tag(0.0)
-                    Text("顺滑（25 毫秒）").tag(0.025)
-                    Text("稳重（60 毫秒）").tag(0.06)
-                    Text("省力（120 毫秒）").tag(0.12)
+                    Text("每一次滚动都响应").tag(0.0)
+                    Text("25 毫秒").tag(0.025)
+                    Text("60 毫秒").tag(0.06)
+                    Text("120 毫秒").tag(0.12)
                 }
                 .pickerStyle(.menu)
-                Toggle("反转方向（下滑减小、上滑增大）", isOn: $s.invert)
-                Toggle("显示音量浮层", isOn: $s.showOSD)
                 Toggle("在菜单栏显示音量百分比", isOn: $s.showPercentInMenuBar)
+                Text("反馈使用系统自带的音量 / 亮度提示，本软件不绘制浮层。")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("启动") {
@@ -584,14 +540,13 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 460, height: 730)
+        .frame(width: 460, height: 760)
     }
 }
 
 // MARK: - 全局动作
 
 enum Actions {
-    /// 触发系统授权弹窗（会把 App 自动加入辅助功能列表），再打开设置面板
     static func requestAccessibility() {
         let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
@@ -609,20 +564,21 @@ enum Actions {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let tap = ScrollTap()
-    private let hud = VolumeHUD()
     private var settingsWindow: NSWindow?
     private var permissionTimer: Timer?
     private let state = AppState.shared
     private var menuVolumeItem: NSMenuItem!
+    private var menuBrightnessItem: NSMenuItem!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-
         buildStatusItem()
-        tap.onScroll = { [weak self] increase in self?.adjust(increase: increase) }
+
+        tap.onScroll = { [weak self] increase, mode, display in
+            self?.adjust(increase: increase, mode: mode, display: display)
+        }
         refreshPermission(prompt: true)
 
-        // 权限状态可能在系统设置里被改动，低频轮询即可
         let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
             self?.refreshPermission(prompt: false)
         }
@@ -634,7 +590,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.refreshStatusTitle()
         }
 
-        // 首次安装：无权限时直接把设置页摆出来，避免用户对着菜单栏猜
         if !state.trusted {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
                 self?.openSettings()
@@ -649,8 +604,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         tap.stop()
     }
 
-    // MARK: 菜单栏
-
     private func buildStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
@@ -658,7 +611,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                    accessibilityDescription: "WheelVolume")
             button.image?.isTemplate = true
             button.imagePosition = .imageLeading
-            button.toolTip = "WheelVolume — 滚轮调音量"
+            button.toolTip = "WheelVolume — 顶部边缘滚轮调音量/亮度"
         }
 
         let menu = NSMenu()
@@ -667,6 +620,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menuVolumeItem = NSMenuItem(title: "音量 —", action: nil, keyEquivalent: "")
         menuVolumeItem.isEnabled = false
         menu.addItem(menuVolumeItem)
+
+        menuBrightnessItem = NSMenuItem(title: "亮度 —", action: nil, keyEquivalent: "")
+        menuBrightnessItem.isEnabled = false
+        menu.addItem(menuBrightnessItem)
         menu.addItem(.separator())
 
         let settings = NSMenuItem(title: "设置…", action: #selector(openSettings), keyEquivalent: ",")
@@ -697,12 +654,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
-        if let v = Volume.get(Volume.defaultOutput()) {
-            let pct = Int((v * 100).rounded())
-            menuVolumeItem.title = Volume.isMuted(Volume.defaultOutput())
-                ? "音量 \(pct)%（静音）" : "音量 \(pct)%"
+        let device = Volume.defaultOutput()
+        if let v = Volume.get(device) {
+            menuVolumeItem.title = Volume.isMuted(device)
+                ? "音量 \(Int((v * 100).rounded()))%（静音）"
+                : "音量 \(Int((v * 100).rounded()))%"
         } else {
             menuVolumeItem.title = "当前输出设备不支持音量控制"
+        }
+        if let b = ScreenBrightness.get() {
+            menuBrightnessItem.title = "亮度 \(b)%"
+        } else {
+            menuBrightnessItem.title = "当前显示器不支持系统亮度控制"
         }
         menu.items.first { $0.action == #selector(toggleLogin) }?.state =
             LoginItem.isEnabled ? .on : .off
@@ -723,9 +686,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshStatusTitle()
     }
 
-    @objc private func openAX() {
-        Actions.openAccessibilitySettings()
-    }
+    @objc private func openAX() { Actions.openAccessibilitySettings() }
 
     @objc private func showAbout() {
         NSApp.activate(ignoringOtherApps: true)
@@ -733,7 +694,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             .applicationName: APP_NAME,
             .applicationVersion: APP_VERSION,
             .credits: NSAttributedString(
-                string: "用 Option / Fn + 滚轮无级调节系统音量\n仅支持 Apple Silicon · MIT License",
+                string: "屏幕顶部边缘：滚轮调音量，Ctrl+滚轮调亮度\n仅支持 Apple Silicon · MIT License",
                 attributes: [.font: NSFont.systemFont(ofSize: 11),
                              .foregroundColor: NSColor.secondaryLabelColor])
         ])
@@ -748,7 +709,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             w.title = "WheelVolume 设置"
             w.styleMask = [.titled, .closable, .miniaturizable]
             w.isReleasedWhenClosed = false
-            w.setContentSize(NSSize(width: 460, height: 730))
+            w.setContentSize(NSSize(width: 460, height: 760))
             w.center()
             settingsWindow = w
         }
@@ -761,34 +722,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return true
     }
 
-    // MARK: 权限与滚轮
-
     private func refreshPermission(prompt: Bool) {
         var trusted = AXIsProcessTrusted()
         if !trusted, prompt {
             let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
             trusted = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
         }
-        if trusted != state.trusted {
-            state.trusted = trusted
-        }
+        if trusted != state.trusted { state.trusted = trusted }
         if trusted, !tap.isRunning {
             _ = tap.start()
             refreshStatusTitle()
         }
     }
 
-    private func adjust(increase: Bool) {
-        let device = Volume.defaultOutput()
-        guard let current = Volume.get(device) else { return }
+    /// 每种模式只写自己的目标，互斥由调用处的单一 mode 枚举保证
+    private func adjust(increase: Bool, mode: ScrollMode, display: CGDirectDisplayID) {
+        switch mode {
+        case .volume:
+            let device = Volume.defaultOutput()
+            guard let current = Volume.get(device) else { return }
+            var percent = Int((current * 100).rounded())
+            percent = WheelLogic.nextPercent(percent, increase: increase)
+            if increase, Volume.isMuted(device) { Volume.setMuted(device, false) }
+            guard Volume.set(device, Float32(percent) / 100) else { return }
+            NativeFeedback.show(.volume, percent: percent, display: display)
+            refreshStatusTitle()
 
-        if Volume.isMuted(device), increase { Volume.setMuted(device, false) }
-        let next = max(0, min(1, current + (increase ? 1 : -1) * prefs.step))
-        Volume.set(device, next)
-
-        let actual = Volume.get(device) ?? next
-        hud.show(volume: actual, muted: Volume.isMuted(device))
-        refreshStatusTitle()
+        case .brightness:
+            guard let current = ScreenBrightness.get(display) else { return }
+            let percent = WheelLogic.nextPercent(current, increase: increase)
+            guard ScreenBrightness.set(percent, display: display) else { return }
+            NativeFeedback.show(.brightness, percent: percent, display: display)
+        }
     }
 
     private func openSettingsOnFirstRunIfNeeded() {
@@ -811,12 +776,18 @@ if cliArgs.contains("--version") || cliArgs.contains("-v") {
 }
 if cliArgs.contains("--help") || cliArgs.contains("-h") {
     print("""
-    \(APP_NAME) \(APP_VERSION) — Option/Fn + 滚轮调音量（仅 Apple Silicon）
+    \(APP_NAME) \(APP_VERSION) — 屏幕顶部边缘滚轮调音量 / Ctrl+滚轮调亮度
 
     用法:
       WheelVolume [--version|-v] [--help|-h]
 
-    设置: 菜单栏图标 → 设置…（调节精细度、触发键、方向、开机启动）
+    规则:
+      鼠标位于屏幕顶部边缘热区时滚轮才生效；其他位置完全不干预。
+      未按 Ctrl：上滑音量 +1%，下滑 −1%
+      按住 Ctrl：上滑亮度 +1%，下滑 −1%
+      两种模式互斥，数值限制在 0%–100%
+
+    设置: 菜单栏图标 → 设置…（热区高度、响应间隔、开机启动）
     权限: 系统设置 → 隐私与安全性 → 辅助功能 → 勾选 WheelVolume
     """)
     exit(0)
@@ -827,13 +798,9 @@ fputs("\(APP_NAME) 仅支持 Apple Silicon (arm64) 芯片的 Mac。\n", stderr)
 exit(2)
 #endif
 
-// 单实例：避免开机项与手动启动叠加出两个菜单栏图标
 let running = NSRunningApplication.runningApplications(withBundleIdentifier: BUNDLE_ID)
-if running.count > 1 {
-    exit(0)
-}
+if running.count > 1 { exit(0) }
 
-// 清理 v1.x 遗留的 LaunchAgent（旧版本用脚本安装）
 let legacyAgent = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent("Library/LaunchAgents/com.dushanlin.WheelVolume.plist")
 if FileManager.default.fileExists(atPath: legacyAgent.path) {
@@ -845,11 +812,40 @@ if FileManager.default.fileExists(atPath: legacyAgent.path) {
     try? FileManager.default.removeItem(at: legacyAgent)
 }
 
-/// 标准的 AppKit 启动路径：必须由 NSApplication 接管事件循环，
-/// 否则 LaunchServices 收不到启动回执，Finder 会报"应用程序没有响应"。
+/// 必须由 NSApplication 接管事件循环，否则 LaunchServices 判为"没有响应"。
 let app = NSApplication.shared
 
-// 离屏渲染设置界面，供开发/CI 校验排版：WheelVolume --render-settings out.png
+// 自检：不需要辅助功能权限，验证热区判定、方向、边界与模式互斥
+if cliArgs.contains("--selftest") {
+    var failures: [String] = []
+    func check(_ ok: Bool, _ label: String) {
+        print("\(ok ? "PASS" : "FAIL")  \(label)")
+        if !ok { failures.append(label) }
+    }
+
+    check(WheelLogic.nextPercent(50, increase: true) == 51, "上滑 50% → 51%")
+    check(WheelLogic.nextPercent(50, increase: false) == 49, "下滑 50% → 49%")
+    check(WheelLogic.nextPercent(100, increase: true) == 100, "上边界 100% 不越界")
+    check(WheelLogic.nextPercent(0, increase: false) == 0, "下边界 0% 不越界")
+    check(WheelLogic.nextPercent(0, increase: true) == 1, "0% 上滑 → 1%")
+    check(WheelLogic.nextPercent(100, increase: false) == 99, "100% 下滑 → 99%")
+    check(WheelLogic.mode(controlDown: false) == .volume, "未按 Ctrl → 音量模式")
+    check(WheelLogic.mode(controlDown: true) == .brightness, "按住 Ctrl → 亮度模式（互斥）")
+
+    let oldHeight = prefs.hotZoneHeight
+    prefs.hotZoneHeight = 8
+    let f = CGDisplayBounds(CGMainDisplayID())
+    let midX = f.origin.x + f.width / 2
+    check(HotZone.contains(CGPoint(x: midX, y: f.origin.y + 2)), "顶部 2pt 属于热区")
+    check(!HotZone.contains(CGPoint(x: midX, y: f.origin.y + 100)), "顶部 100pt 不属于热区")
+    check(!HotZone.contains(CGPoint(x: midX, y: f.maxY - 2)), "屏幕底部不属于热区")
+    prefs.hotZoneHeight = oldHeight
+
+    print(failures.isEmpty ? "SELFTEST OK" : "SELFTEST FAILED: \(failures.count)")
+    exit(failures.isEmpty ? 0 : 1)
+}
+
+// 离屏渲染设置界面，供开发/CI 校验排版
 if let i = cliArgs.firstIndex(of: "--render-settings"), i + 1 < cliArgs.count {
     let out = cliArgs[i + 1]
     let previewState = AppState.shared
@@ -857,7 +853,7 @@ if let i = cliArgs.firstIndex(of: "--render-settings"), i + 1 < cliArgs.count {
         previewState.trusted = true
     }
     let host = NSHostingView(rootView: SettingsView(s: previewState))
-    host.frame = NSRect(x: 0, y: 0, width: 460, height: 730)
+    host.frame = NSRect(x: 0, y: 0, width: 460, height: 760)
     host.layoutSubtreeIfNeeded()
     if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
         host.cacheDisplay(in: host.bounds, to: rep)

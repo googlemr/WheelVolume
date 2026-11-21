@@ -32,6 +32,7 @@ jobs:
           lipo -archs /tmp/WheelVolume
           /tmp/WheelVolume --version
           /tmp/WheelVolume --help
+          /tmp/WheelVolume --selftest
           /tmp/WheelVolume --render-settings /tmp/settings-preview.png
           test -s /tmp/settings-preview.png
 

@@ -8,6 +8,33 @@
 
 （暂无）
 
+## [2.1.0] - 2026-11-21
+
+滚轮逻辑改为「屏幕顶部边缘热区 + Ctrl 模式切换」。
+
+### 变更（破坏性）
+
+- 移除 Option / Fn 修饰键触发，改为**仅鼠标位于屏幕顶部边缘热区时**才接管滚轮；
+  其他位置事件原样放行，不改动音量或亮度。
+- 移除可调步进、方向反转与自定义音量浮层。固定为**上滑 +1%、下滑 −1%**，
+  0%–100% 边界停止。
+- 新增 Ctrl 模式：未按 Ctrl 调音量，按住 Ctrl 调亮度；两种模式由一个枚举决定，
+  严格互斥。
+- 反馈改为调用系统 `OSDUIHelper` 原生 OSD，不再绘制自定义 HUD。
+- 设置项精简为：热区高度（新增，默认 8pt）、调节间隔、菜单栏百分比、开机自启。
+
+### 新增
+
+- `HotZone`：按鼠标所在显示的 `CGDisplayBounds` 上边缘判断，兼容多显示器。
+- `ScreenBrightness`：通过 `DisplayServices` 读写系统亮度；不支持的显示器在
+  设置页明确提示，不做 DDC/CI。
+- `--selftest`：无辅助功能权限即可校验方向、边界、热区与模式互斥。
+
+### 说明
+
+- 现有配置中没有热区字段，因此热区范围是本版新增配置，并非沿用旧值。
+- macOS 26 起系统不为程序化变更显示原生 OSD；本软件不会绘制替代界面。
+
 ## [2.0.0] - 2026-11-20
 
 一次结构性重写：修掉"打开时没有响应"，并补齐图标与图形化设置。
@@ -85,6 +112,7 @@
 - Apple Silicon 运行时校验，拒绝 Rosetta 环境。
 - 完整开源项目文档、Issue/PR 模板、CI 构建工作流。
 
-[Unreleased]: https://github.com/googlemr/WheelVolume/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/googlemr/WheelVolume/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/googlemr/WheelVolume/releases/tag/v2.1.0
 [2.0.0]: https://github.com/googlemr/WheelVolume/releases/tag/v2.0.0
 [1.0.0]: https://github.com/googlemr/WheelVolume/releases/tag/v1.0.0
