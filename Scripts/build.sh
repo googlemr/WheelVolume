@@ -43,6 +43,7 @@ rm -rf "$RES/AppIcon.iconset" "$RES/AppIcon-1024.png"
 echo "==> 编译 arm64-apple-macos13.0 ..."
 swiftc -O -swift-version 5 \
     -target arm64-apple-macos13.0 \
+    -framework IOKit -framework CoreDisplay \
     -o "$MACOS/WheelVolume" src/WheelVolume.swift
 
 BUILT_ARCH="$(lipo -archs "$MACOS/WheelVolume" 2>/dev/null || echo unknown)"

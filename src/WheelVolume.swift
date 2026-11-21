@@ -8,10 +8,11 @@ import SwiftUI
 import CoreAudio
 import CoreGraphics
 import ApplicationServices
+import IOKit
 
 // MARK: - 元信息
 
-let APP_VERSION = "2.1.0"
+let APP_VERSION = "2.2.0"
 let APP_NAME = "WheelVolume"
 let BUNDLE_ID = "com.shanlin.WheelVolume"
 let AX_PANE_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
@@ -102,7 +103,7 @@ final class AppState: ObservableObject {
     @Published var showPercentInMenuBar: Bool { didSet { persist() } }
     @Published var launchAtLogin: Bool { didSet { persist(); LoginItem.set(launchAtLogin) } }
     @Published var trusted: Bool = false
-    @Published var brightnessSupported: Bool = ScreenBrightness.canChange()
+    @Published var brightnessSupported: Bool = DisplayBrightness.supported()
 
     private var loading = false
 
@@ -257,82 +258,315 @@ enum Volume {
     }
 }
 
-// MARK: - 系统亮度（DisplayServices 私有框架，Apple 内置显示器）
+// MARK: - 亮度控制：DDC/CI（外接显示器） + DisplayServices（内置显示器）
 
-enum ScreenBrightness {
-    private typealias GetFn = @convention(c) (CGDirectDisplayID, UnsafeMutablePointer<Float>) -> Int32
-    private typealias SetFn = @convention(c) (CGDirectDisplayID, Float) -> Int32
-    private typealias BoolFn = @convention(c) (CGDirectDisplayID) -> Bool
+/// 外接显示器走 VESA DDC/CI，与 F1/F2 按键相同的通路。
+/// IOAVService / CoreDisplay 为系统私有符号，按公开 DDC 协议发命令。
+@_silgen_name("CoreDisplay_DisplayCreateInfoDictionary")
+private func coreDisplayInfo(_ display: CGDirectDisplayID) -> UnsafeMutableRawPointer?
+@_silgen_name("IOAVServiceCreateWithService")
+private func avServiceCreate(_ allocator: CFAllocator?, _ service: io_service_t) -> UnsafeMutableRawPointer?
+@_silgen_name("IOAVServiceReadI2C")
+private func avReadI2C(_ service: UnsafeMutableRawPointer?, _ chip: UInt32,
+                       _ offset: UInt32, _ buffer: UnsafeMutableRawPointer?, _ size: UInt32) -> Int32
+@_silgen_name("IOAVServiceWriteI2C")
+private func avWriteI2C(_ service: UnsafeMutableRawPointer?, _ chip: UInt32,
+                        _ offset: UInt32, _ buffer: UnsafeMutableRawPointer?, _ size: UInt32) -> Int32
 
-    private static let handle: UnsafeMutableRawPointer? = dlopen(
-        "/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices", RTLD_NOW)
-    private static let getFn: GetFn? = {
-        guard let p = dlsym(handle, "DisplayServicesGetBrightness") else { return nil }
-        return unsafeBitCast(p, to: GetFn.self)
-    }()
-    private static let setFn: SetFn? = {
-        guard let p = dlsym(handle, "DisplayServicesSetBrightness") else { return nil }
-        return unsafeBitCast(p, to: SetFn.self)
-    }()
-    private static let canFn: BoolFn? = {
-        guard let p = dlsym(handle, "DisplayServicesCanChangeBrightness") else { return nil }
-        return unsafeBitCast(p, to: BoolFn.self)
-    }()
+enum DisplayBrightness {
+    private static let ddcChip: UInt32 = 0x37
+    private static let ddcAddress: UInt32 = 0x51
+    private static let vcpLuminance: UInt8 = 0x10
+    private static let queue = DispatchQueue(label: "com.shanlin.WheelVolume.ddc", qos: .userInteractive)
+    private static var avService: UnsafeMutableRawPointer?
+    private static var lastPercent = 60
+    private static var lastLevel: Level?
+    private static var supportedCache: Bool?
 
-    static func canChange(_ display: CGDirectDisplayID = CGMainDisplayID()) -> Bool {
-        guard let canFn else { return false }
-        return canFn(display)
+    typealias Level = (current: Int, maximum: Int)
+
+    /// 找到显示器对应的 DCPAVServiceProxy（Location = External）
+    private static func makeAVService() -> UnsafeMutableRawPointer? {
+        var count: UInt32 = 0
+        var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+        guard CGGetOnlineDisplayList(16, &ids, &count) == CGError.success, count > 0 else { return nil }
+        guard let raw = coreDisplayInfo(ids[0]) else { return nil }
+        let dict = Unmanaged<CFDictionary>.fromOpaque(raw).takeRetainedValue()
+        guard let p = CFDictionaryGetValue(dict, Unmanaged.passUnretained("IODisplayLocation" as CFString).toOpaque()) else {
+            return nil
+        }
+        let path = Unmanaged<CFString>.fromOpaque(p).takeUnretainedValue() as String
+        let adapter = IORegistryEntryCopyFromPath(kIOMainPortDefault, path as CFString)
+        var adapterID: UInt64 = 0
+        guard IORegistryEntryGetRegistryEntryID(adapter, &adapterID) == KERN_SUCCESS else {
+            IOObjectRelease(adapter)
+            return nil
+        }
+        IOObjectRelease(adapter)
+
+        let root = IORegistryGetRootEntry(kIOMainPortDefault)
+        var iter: io_iterator_t = 0
+        var result: UnsafeMutableRawPointer? = nil
+        guard IORegistryEntryCreateIterator(root, kIOServicePlane,
+                                            IOOptionBits(kIORegistryIterateRecursively), &iter) == KERN_SUCCESS else {
+            return nil
+        }
+        var matchedFramebuffer = false
+        while true {
+            let obj = IOIteratorNext(iter)
+            if obj == IO_OBJECT_NULL { break }
+            if IOObjectConformsTo(obj, "IOMobileFramebuffer") != 0 {
+                var fid: UInt64 = 0
+                matchedFramebuffer = IORegistryEntryGetRegistryEntryID(obj, &fid) == KERN_SUCCESS && fid == adapterID
+                IOObjectRelease(obj)
+                continue
+            }
+            var name = [CChar](repeating: 0, count: 128)
+            IORegistryEntryGetName(obj, &name)
+            if matchedFramebuffer, String(cString: name) == "DCPAVServiceProxy" {
+                let loc = IORegistryEntryCreateCFProperty(obj, "Location" as CFString,
+                                                          kCFAllocatorDefault, 0)?.takeRetainedValue() as? String
+                if loc == "External" {
+                    result = avServiceCreate(kCFAllocatorDefault, obj)
+                    IOObjectRelease(obj)
+                    break
+                }
+            }
+            IOObjectRelease(obj)
+        }
+        IOObjectRelease(iter)
+        return result
     }
 
-    static func get(_ display: CGDirectDisplayID = CGMainDisplayID()) -> Int? {
-        guard let getFn else { return nil }
-        var value: Float = 0
-        guard getFn(display, &value) == 0 else { return nil }
-        return min(100, max(0, Int((value * 100).rounded())))
+    private static func service() -> UnsafeMutableRawPointer? {
+        if avService == nil { avService = makeAVService() }
+        return avService
+    }
+
+    /// DDC/CI "Get VCP Feature Reply"，最多重试 4 次（显示器响应有延迟）
+    static func read() -> Level? {
+        guard let s = service() else { return nil }
+        for _ in 0..<8 {
+            var data = [UInt8](repeating: 0, count: 32)
+            data[0] = 0x82
+            data[1] = 0x01
+            data[2] = vcpLuminance
+            data[3] = 0x6E ^ UInt8(ddcAddress) ^ data[0] ^ data[1] ^ data[2]
+            usleep(20_000)
+            let err = avReadI2C(s, ddcChip, ddcAddress, &data, 12)
+            guard err == 0, data[0] == vcpLuminance else { usleep(30_000); continue }
+
+            let maxV = (Int(data[2]) << 8) | Int(data[3])
+            let curV = (Int(data[4]) << 8) | Int(data[5])
+            // 合法回复：最大值 1–1000，当前值不超过最大值
+            if maxV > 0, maxV <= 1000, curV <= maxV {
+                lastLevel = (curV, maxV)
+                lastPercent = min(100, max(0, curV * 100 / maxV))
+                return lastLevel
+            }
+            usleep(30_000)
+        }
+        return lastLevel
     }
 
     @discardableResult
-    static func set(_ percent: Int, display: CGDirectDisplayID = CGMainDisplayID()) -> Bool {
-        guard let setFn else { return false }
-        let clamped = min(100, max(0, percent))
-        return setFn(display, Float(clamped) / 100) == 0
+    static func write(_ percent: Int) -> Bool {
+        guard let s = service() else { return false }
+        let level = read()
+        let maxV = level?.maximum ?? 100
+        let value = min(maxV, max(0, percent * maxV / 100))
+        for _ in 0..<3 {
+            var data = [UInt8](repeating: 0, count: 32)
+            data[0] = 0x84
+            data[1] = 0x03
+            data[2] = vcpLuminance
+            data[3] = UInt8(value >> 8)
+            data[4] = UInt8(value & 0xFF)
+            data[5] = 0x6E ^ UInt8(ddcAddress) ^ data[0] ^ data[1] ^ data[2] ^ data[3] ^ data[4]
+            if avWriteI2C(s, ddcChip, ddcAddress, &data, 6) == 0 {
+                lastPercent = min(100, max(0, percent))
+                return true
+            }
+            usleep(10_000)
+        }
+        return false
+    }
+
+    /// 沿 F1/F2 的通路：外接显示器 DDC/CI，内置显示器 DisplayServices
+    static func supported() -> Bool {
+        if let cache = supportedCache { return cache }
+        var result = false
+        if service() != nil, read() != nil {
+            result = true
+        } else if let p = dlsym(dpHandle, "DisplayServicesCanChangeBrightness") {
+            typealias F = @convention(c) (CGDirectDisplayID) -> Bool
+            result = unsafeBitCast(p, to: F.self)(CGMainDisplayID())
+        }
+        supportedCache = result
+        return result
+    }
+
+    static func current() -> Int? {
+        if let level = read() { return min(100, max(0, level.current * 100 / level.maximum)) }
+        if lastLevel != nil { return lastPercent }
+        guard let p = dlsym(dpHandle, "DisplayServicesGetBrightness") else { return nil }
+        typealias F = @convention(c) (CGDirectDisplayID, UnsafeMutablePointer<Float>) -> Int32
+        var v: Float = 0
+        guard unsafeBitCast(p, to: F.self)(CGMainDisplayID(), &v) == 0 else { return nil }
+        return min(100, max(0, Int((v * 100).rounded())))
+    }
+
+    private static let dpHandle = dlopen(
+        "/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices", RTLD_NOW)
+
+    static func change(by delta: Int, completion: @escaping (Int?) -> Void) {
+        let target = min(100, max(0, lastPercent + delta))
+        queue.async {
+            let ok: Bool
+            if service() != nil {
+                ok = write(target)
+            } else if let p = dlsym(dpHandle, "DisplayServicesSetBrightness") {
+                typealias F = @convention(c) (CGDirectDisplayID, Float) -> Int32
+                ok = unsafeBitCast(p, to: F.self)(CGMainDisplayID(), Float(target) / 100) == 0
+            } else { ok = false }
+            if ok { lastPercent = target }
+            DispatchQueue.main.async { completion(ok ? target : nil) }
+        }
     }
 }
 
-// MARK: - 系统自带 OSD 反馈（不绘制任何自定义界面）
+// MARK: - 右上角提示弹窗（系统通知风格，调节结束后自动消失）
 
-@objc private protocol OSDUIHelperProtocol {
-    func showImage(_ image: Int64, onDisplayID: UInt32, priority: UInt32,
-                   msecUntilFade: UInt32, filledChiclets: UInt32,
-                   totalChiclets: UInt32, locked: Bool)
+enum HUDKind {
+    case volume
+    case brightness
+
+    var title: String { self == .volume ? "音量" : "显示器亮度" }
+    var symbol: String { self == .volume ? "speaker.wave.2.fill" : "sun.max.fill" }
 }
 
-enum NativeFeedback {
-    enum Kind {
-        case volume       // showosd: image 3
-        case brightness   // showosd: image 1
+final class HUDContentView: NSView {
+    let icon = NSImageView()
+    let titleLabel = NSTextField(labelWithString: "")
+    let percentLabel = NSTextField(labelWithString: "")
+    let track = NSView()
+    let fill = NSView()
 
-        var imageID: Int64 { self == .volume ? 3 : 1 }
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 16
+        layer?.masksToBounds = true
+
+        icon.frame = NSRect(x: 16, y: 20, width: 34, height: 34)
+        icon.image = NSImage(systemSymbolName: "speaker.wave.2.fill",
+                             accessibilityDescription: "音量")
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 20, weight: .semibold)
+        icon.contentTintColor = .white
+        icon.wantsLayer = true
+        icon.layer?.cornerRadius = 10
+        icon.layer?.backgroundColor = NSColor.systemBlue.cgColor
+        addSubview(icon)
+
+        titleLabel.frame = NSRect(x: 60, y: 37, width: 120, height: 18)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.textColor = .labelColor
+        addSubview(titleLabel)
+
+        percentLabel.frame = NSRect(x: 172, y: 36, width: 58, height: 20)
+        percentLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+        percentLabel.alignment = .right
+        percentLabel.textColor = .secondaryLabelColor
+        addSubview(percentLabel)
+
+        track.frame = NSRect(x: 60, y: 22, width: 170, height: 6)
+        track.wantsLayer = true
+        track.layer?.cornerRadius = 3
+        track.layer?.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(0.25).cgColor
+        addSubview(track)
+
+        fill.frame = NSRect(x: 60, y: 22, width: 0, height: 6)
+        fill.wantsLayer = true
+        fill.layer?.cornerRadius = 3
+        fill.layer?.backgroundColor = NSColor.systemBlue.cgColor
+        addSubview(fill)
     }
 
-    private static let connection: NSXPCConnection = {
-        let c = NSXPCConnection(serviceName: "com.apple.OSDUIHelper")
-        c.remoteObjectInterface = NSXPCInterface(with: OSDUIHelperProtocol.self)
-        c.resume()
-        return c
-    }()
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    /// 调用系统 OSDUIHelper 显示原生音量/亮度反馈。
-    /// macOS 26 起系统不再为程序化变更弹出该浮层；此处不会绘制任何替代界面。
-    static func show(_ kind: Kind, percent: Int, display: CGDirectDisplayID) {
-        guard let proxy = connection.remoteObjectProxy as? OSDUIHelperProtocol else { return }
-        proxy.showImage(kind.imageID,
-                        onDisplayID: display,
-                        priority: 0x1F4,
-                        msecUntilFade: 1200,
-                        filledChiclets: UInt32(min(100, max(0, percent))),
-                        totalChiclets: 100,
-                        locked: false)
+    func configure(kind: HUDKind, percent: Int) {
+        titleLabel.stringValue = kind.title
+        percentLabel.stringValue = "\(percent)%"
+        icon.image = NSImage(systemSymbolName: kind.symbol, accessibilityDescription: kind.title)
+        let p = min(100, max(0, percent))
+        fill.frame.size.width = CGFloat(p) / 100 * 170
+    }
+}
+
+final class StatusHUD {
+    private var panel: NSPanel?
+    private let content = HUDContentView(frame: NSRect(x: 0, y: 0, width: 246, height: 74))
+    private var hideTask: DispatchWorkItem?
+
+    func show(kind: HUDKind, percent: Int) {
+        let p: NSPanel
+        if let existing = panel {
+            p = existing
+        } else {
+            p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 246, height: 74),
+                        styleMask: [.borderless, .nonactivatingPanel],
+                        backing: .buffered, defer: false)
+            p.isOpaque = false
+            p.backgroundColor = .clear
+            p.hasShadow = true
+            p.level = .statusBar
+            p.ignoresMouseEvents = true
+            p.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+
+            let blur = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 246, height: 74))
+            blur.material = .hudWindow
+            blur.blendingMode = .behindWindow
+            blur.state = .active
+            blur.wantsLayer = true
+            blur.layer?.cornerRadius = 16
+            blur.layer?.masksToBounds = true
+            blur.addSubview(content)
+            p.contentView = blur
+            panel = p
+        }
+
+        content.configure(kind: kind, percent: percent)
+
+        // 右上角：菜单栏下方留 10pt，右边距 16pt
+        if let screen = NSScreen.main {
+            let vf = screen.visibleFrame
+            p.setFrameOrigin(NSPoint(x: vf.maxX - 246 - 16,
+                                     y: vf.maxY - 74 - 10))
+        }
+        if !p.isVisible {
+            p.alphaValue = 0
+            p.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.14
+                p.animator().alphaValue = 1
+            }
+        } else {
+            p.orderFrontRegardless()
+        }
+
+        // 每次调节都重新计时；停止调节 1.2 秒后自动消失，绝不常驻
+        hideTask?.cancel()
+        let task = DispatchWorkItem { [weak self] in self?.hide() }
+        hideTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: task)
+    }
+
+    private func hide() {
+        guard let p = panel, p.isVisible else { return }
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.22
+            p.animator().alphaValue = 0
+        }, completionHandler: { p.orderOut(nil) })
     }
 }
 
@@ -519,7 +753,7 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.menu)
                 Toggle("在菜单栏显示音量百分比", isOn: $s.showPercentInMenuBar)
-                Text("反馈使用系统自带的音量 / 亮度提示，本软件不绘制浮层。")
+                Text("调节时右上角弹出提示，停止调节后约 1 秒自动消失。")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -566,6 +800,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let tap = ScrollTap()
     private var settingsWindow: NSWindow?
     private var permissionTimer: Timer?
+    private let hud = StatusHUD()
     private let state = AppState.shared
     private var menuVolumeItem: NSMenuItem!
     private var menuBrightnessItem: NSMenuItem!
@@ -662,7 +897,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             menuVolumeItem.title = "当前输出设备不支持音量控制"
         }
-        if let b = ScreenBrightness.get() {
+        if let b = DisplayBrightness.current() {
             menuBrightnessItem.title = "亮度 \(b)%"
         } else {
             menuBrightnessItem.title = "当前显示器不支持系统亮度控制"
@@ -741,18 +976,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .volume:
             let device = Volume.defaultOutput()
             guard let current = Volume.get(device) else { return }
-            var percent = Int((current * 100).rounded())
-            percent = WheelLogic.nextPercent(percent, increase: increase)
+            let percent = WheelLogic.nextPercent(Int((current * 100).rounded()),
+                                                  increase: increase)
             if increase, Volume.isMuted(device) { Volume.setMuted(device, false) }
             guard Volume.set(device, Float32(percent) / 100) else { return }
-            NativeFeedback.show(.volume, percent: percent, display: display)
+            hud.show(kind: .volume, percent: percent)
             refreshStatusTitle()
 
         case .brightness:
-            guard let current = ScreenBrightness.get(display) else { return }
-            let percent = WheelLogic.nextPercent(current, increase: increase)
-            guard ScreenBrightness.set(percent, display: display) else { return }
-            NativeFeedback.show(.brightness, percent: percent, display: display)
+            DisplayBrightness.change(by: increase ? 1 : -1) { [weak self] percent in
+                guard let percent else { return }
+                self?.hud.show(kind: .brightness, percent: percent)
+            }
         }
     }
 
@@ -843,6 +1078,24 @@ if cliArgs.contains("--selftest") {
 
     print(failures.isEmpty ? "SELFTEST OK" : "SELFTEST FAILED: \(failures.count)")
     exit(failures.isEmpty ? 0 : 1)
+}
+
+// 离屏渲染右上角提示，供开发/CI 校验样式
+if let i = cliArgs.firstIndex(of: "--render-hud"), i + 1 < cliArgs.count {
+    let out = cliArgs[i + 1]
+    let box = NSView(frame: NSRect(x: 0, y: 0, width: 246, height: 74))
+    box.wantsLayer = true
+    box.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+    let content = HUDContentView(frame: box.bounds)
+    content.configure(kind: .brightness, percent: 63)
+    box.addSubview(content)
+    box.layoutSubtreeIfNeeded()
+    if let rep = box.bitmapImageRepForCachingDisplay(in: box.bounds) {
+        box.cacheDisplay(in: box.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?
+            .write(to: URL(fileURLWithPath: out))
+    }
+    exit(0)
 }
 
 // 离屏渲染设置界面，供开发/CI 校验排版

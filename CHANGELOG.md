@@ -8,6 +8,44 @@
 
 （暂无）
 
+## [2.2.0] - 2026-11-21
+
+按反馈恢复右上角提示，并用滚轮接管 F1/F2 的亮度通路。
+
+### 变更
+
+- **恢复提示弹窗**：调节音量或亮度时，屏幕右上角显示系统通知风格面板
+  （图标 + 标题 + 百分比 + 进度条）；停止调节约 1.2 秒后自动淡出，不常驻。
+- **亮度改用 VESA DDC/CI**：通过 `IOAVService` 读写 VCP 0x10，与 F1/F2 按键
+  同一通路；内置显示器回退 `DisplayServices`。在本机 Mac mini M4 + HDMI
+  外接显示器上实测写入并回读成功。
+- 亮度读取带重试与缓存：启动时读一次，之后滚轮只写入 ±1%，避免卡顿。
+- 删除 v2.1.0 的自定义 HUD 限制说明；设置页实时显示亮度控制是否可用。
+
+### 保留
+
+- 仅顶部边缘热区生效；未按 Ctrl 调音量、按住 Ctrl 调亮度；模式互斥。
+- 上滑 +1%、下滑 −1%，0%–100% 边界停止。
+
+## [2.2.0] - 2026-11-21
+
+按反馈恢复右上角提示，并用滚轮接管 F1/F2 的亮度通路。
+
+### 变更
+
+- **恢复提示弹窗**：调节音量或亮度时，屏幕右上角显示系统通知风格面板
+  （图标 + 标题 + 百分比 + 进度条）；停止调节约 1.2 秒后自动淡出，不常驻。
+- **亮度改用 VESA DDC/CI**：通过 `IOAVService` 读写 VCP 0x10，与 F1/F2 按键
+  同一通路；内置显示器回退 `DisplayServices`。在本机 Mac mini M4 + HDMI
+  外接显示器上实测写入并回读成功。
+- 亮度读取带重试与缓存：启动时读一次，之后滚轮只写入 ±1%，避免卡顿。
+- 删除 v2.1.0 的自定义 HUD 限制说明；设置页实时显示亮度控制是否可用。
+
+### 保留
+
+- 仅顶部边缘热区生效；未按 Ctrl 调音量、按住 Ctrl 调亮度；模式互斥。
+- 上滑 +1%、下滑 −1%，0%–100% 边界停止。
+
 ## [2.1.0] - 2026-11-21
 
 滚轮逻辑改为「屏幕顶部边缘热区 + Ctrl 模式切换」。
@@ -112,7 +150,8 @@
 - Apple Silicon 运行时校验，拒绝 Rosetta 环境。
 - 完整开源项目文档、Issue/PR 模板、CI 构建工作流。
 
-[Unreleased]: https://github.com/googlemr/WheelVolume/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/googlemr/WheelVolume/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/googlemr/WheelVolume/releases/tag/v2.2.0
 [2.1.0]: https://github.com/googlemr/WheelVolume/releases/tag/v2.1.0
 [2.0.0]: https://github.com/googlemr/WheelVolume/releases/tag/v2.0.0
 [1.0.0]: https://github.com/googlemr/WheelVolume/releases/tag/v1.0.0

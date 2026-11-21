@@ -49,7 +49,7 @@ Ctrl+滚轮不改变亮度。本软件不提供 DDC/CI 显示器控制。
 ## 命令行
 
 ```bash
-WheelVolume --version     # WheelVolume 2.1.0 (arm64-apple-macos13.0)
+WheelVolume --version     # WheelVolume 2.2.0 (arm64-apple-macos13.0)
 WheelVolume --help
 WheelVolume --selftest    # 校验方向、0–100 边界、热区判定、模式互斥
 WheelVolume --render-settings out.png   # 开发用：离屏渲染设置界面

@@ -28,6 +28,7 @@ jobs:
       - name: 编译验证
         run: |
           swiftc -O -swift-version 5 -target arm64-apple-macos13.0 \
+            -framework IOKit -framework CoreDisplay \
             -o /tmp/WheelVolume src/WheelVolume.swift
           lipo -archs /tmp/WheelVolume
           /tmp/WheelVolume --version

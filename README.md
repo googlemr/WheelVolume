@@ -20,7 +20,7 @@
 - 两种模式互斥：按住 Ctrl 只调亮度，绝不会同时改动音量。
 - 0% 和 100% 处停止，不会越界。
 - 热区高度默认 8pt，可在设置里调（4 / 8 / 16 / 32pt 预设，或 2–48pt 滑块）。
-- 反馈调用系统自带的音量 / 亮度 OSD 接口，**不绘制任何自定义提示界面**。
+- 调节时**右上角**弹出系统通知风格的提示（音量 / 亮度、百分比、进度条），停止调节约 1.2 秒后自动消失，不常驻遮挡。
 
 <img src="docs/images/settings.png" width="500" alt="设置界面">
 
@@ -71,8 +71,8 @@
 - `CGEventTap`（`kCGHIDEventTap`）只订阅 `scrollWheel`；用 `event.location` 与
   `CGGetDisplaysWithPoint` / `CGDisplayBounds` 判断鼠标是否落在顶部热区。
 - `deltaAxis1 > 0` 代表向上滚动；以整数百分比运算，严格夹在 0–100。
-- 音量走 CoreAudio `kAudioDevicePropertyVolumeScalar`；亮度走 `DisplayServices`。
-- OSD 走系统 `OSDUIHelper` XPC；整包 ad-hoc 签名 + SHA256 校验。
+- 音量走 CoreAudio `kAudioDevicePropertyVolumeScalar`；亮度走 DDC/CI（外接）或 `DisplayServices`（内置）。
+- 右上角提示为 `NSVisualEffectView` 面板，调节后自动淡出；整包 ad-hoc 签名 + SHA256 校验。
 
 ## 许可证
 
