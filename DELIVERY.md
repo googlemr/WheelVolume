@@ -1,31 +1,38 @@
-# 交付说明（v2.0.0）
+# 交付说明（v2.1.0，当前最新）
 
 ## 已发布
 
 - 仓库：https://github.com/googlemr/WheelVolume
-- **最新版本**：https://github.com/googlemr/WheelVolume/releases/tag/v2.0.0
-  - `WheelVolume-v2.0.0-arm64.dmg`（982 KB，拖拽安装 + 一键安装脚本）
-  - `WheelVolume-v2.0.0-arm64.zip`（958 KB）
+- **Release**：https://github.com/googlemr/WheelVolume/releases/tag/v2.1.0
+  - `WheelVolume-v2.1.0-arm64.dmg`（1,376,634 字节）
+  - `WheelVolume-v2.1.0-arm64.zip`（978,619 字节）
   - `SHA256SUMS.txt`
+- v2.0.0 保留为历史版本，v2.1.0 已设为 latest。
 
-## 本版解决的问题
+## 实现对照用户需求
 
-| 问题 | 根因 | 处理 |
-| --- | --- | --- |
-| 双击后弹"应用程序没有响应" | 1.x 的 `.app` 内是命令行程序，`CFRunLoopRun()` 直接挂起，从未初始化 `NSApplication`，LaunchServices 收不到启动回执 | 改为标准 AppKit 应用；实测 launch→check-in 0.49 s |
-| 无图标、无设置界面 | 未实现 | 代码绘制 AppIcon.icns + SwiftUI 设置窗口 + 菜单栏菜单 |
+| 需求 | 实现 |
+| --- | --- |
+| 仅顶部边缘热区生效 | `HotZone.contains(event.location)`，按鼠标所在显示的 `CGDisplayBounds` 上边缘 + `hotZoneHeight` 判定；不在热区直接放行事件 |
+| 未按 Ctrl 调音量 | `WheelLogic.mode(false) = .volume`，CoreAudio scalar ±1% |
+| 按住 Ctrl 调亮度 | `WheelLogic.mode(true) = .brightness`，DisplayServices ±1% |
+| 上滑 +1% / 下滑 −1% | `deltaAxis1 > 0` 为向上；整数百分比运算 |
+| 0%–100% 边界 | `WheelLogic.nextPercent` 用 `min(100, max(0, …))` |
+| 模式互斥 | 单一 `ScrollMode` 枚举决定唯一写入目标 |
+| 热区范围沿用现有配置 | 现有代码没有热区字段，故新增 `hotZoneHeight`（默认 8pt）并放进设置页 |
+| 系统自带反馈、无自定义提示 | 调用 `com.apple.OSDUIHelper` XPC，`showImage(image, filled=percent, total=100)`；删除原 `VolumeHUD` |
 
-## 验证记录（本机 macOS 26.7.3 / arm64）
+## 验证记录（macOS 26.7.3 / arm64）
 
-- `codesign --verify --deep --strict`：valid on disk / satisfies its Designated Requirement
-- 从挂载的 DMG 执行 `安装.command`：安装、清隔离、校验签名、启动全部成功
-- 从 Release 真实下载 DMG：`shasum -a 256 -c SHA256SUMS.txt` → OK
-- 启动验证：`lsappinfo` 显示 `launch to checkin time: 0.489455 seconds`，进程常驻
-- UI 验收：`--render-settings` 离屏渲染，六个分区完整无裁切（见 `docs/images/settings.png`）
-- 旧版清理：`/Applications`、`~/Applications` 副本移入废纸篓，`com.dushanlin.WheelVolume` 开机项与 `config.json` 已删除
+- `--selftest` 11 项全部 PASS：方向 2 项、边界 4 项、模式互斥 2 项、热区内外 3 项。
+- `codesign --verify --deep --strict`：通过。
+- `lsappinfo`：Version 2.1.0，`launch to checkin time: 0.315673 seconds`。
+- Release 真实下载：`shasum -a 256 -c SHA256SUMS.txt` → DMG OK。
+- 设置界面离屏渲染检查：六个分区完整、无裁切（docs/images/settings.png）。
 
 ## 已知限制
 
-- 无 Apple 开发者证书，未公证：首次打开需在 **系统设置 → 隐私与安全性 → 仍要打开** 一次。
-- 辅助功能权限无法由脚本代授，需用户在系统设置里勾选（授权后 1 秒内自动生效）。
-- CI（GitHub Actions）在本仓库首次运行可能需在网页端批准一次；发布走 API 手工上传。
+- macOS 26 起系统不为程序化修改显示原生 OSD；软件不绘制替代界面。
+- `DisplayServices` 对 Mac mini 的 HDMI 外接显示器返回 `canChange=false`，
+  设置页显示"当前显示器不支持系统亮度控制"，此时 Ctrl+滚轮不改亮度。
+- 辅助功能权限必须用户手动授予，脚本无法代劳。
